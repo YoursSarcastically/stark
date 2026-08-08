@@ -6,6 +6,7 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var serverStatusMenuItem: NSMenuItem?
+    private var defaultStyleMenu: NSMenu?
     private var undoMenuItem: NSMenuItem?
     private var auraStatusItem: NSMenuItem?
     private var auraTrainItem: NSMenuItem?
@@ -122,6 +123,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(presetsItem)
         menu.setSubmenu(presetsMenu, for: presetsItem)
 
+        // Which style the one-press in-place rewrite uses (config `preset`).
+        let styleMenu = NSMenu()
+        for (i, preset) in Presets.all.enumerated() {
+            let item = NSMenuItem(title: preset.name,
+                                  action: #selector(setDefaultStyle(_:)), keyEquivalent: "")
+            item.tag = i
+            item.target = self
+            item.state = preset.tag == config.preset ? .on : .off
+            styleMenu.addItem(item)
+        }
+        let styleItem = NSMenuItem(title: "Default Style", action: nil, keyEquivalent: "")
+        menu.addItem(styleItem)
+        menu.setSubmenu(styleMenu, for: styleItem)
+        defaultStyleMenu = styleMenu
+
         let undo = NSMenuItem(title: "Undo Last Rewrite",
                               action: #selector(undoRewrite), keyEquivalent: "")
         undo.target = self
@@ -184,6 +200,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func runPreset(_ sender: NSMenuItem) {
         guard Presets.all.indices.contains(sender.tag) else { return }
         panel.show(preset: Presets.all[sender.tag])
+    }
+
+    @objc private func setDefaultStyle(_ sender: NSMenuItem) {
+        guard Presets.all.indices.contains(sender.tag) else { return }
+        config.preset = Presets.all[sender.tag].tag
+        config.save()
+        panel.update(config: config)
+        defaultStyleMenu?.items.forEach { $0.state = $0.tag == sender.tag ? .on : .off }
     }
 
     @objc private func undoRewrite() {

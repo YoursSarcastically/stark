@@ -76,9 +76,14 @@ final class HotKey {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                       eventKind: UInt32(kEventHotKeyPressed))
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        // Every installed handler sees every hotkey event on the app target,
+        // Both the handler and the registration use the event DISPATCHER
+        // target: on the application target, hotkey events are never
+        // delivered to LSUIElement apps launched via LaunchServices (Finder/
+        // `open`) — the key is consumed system-wide but the handler stays
+        // silent. Terminal-launched runs mask the bug.
+        // Every installed handler sees every hotkey event on this target,
         // so each must match its own id and pass the rest along.
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
+        InstallEventHandler(GetEventDispatcherTarget(), { _, event, userData in
             guard let userData, let event else { return OSStatus(eventNotHandledErr) }
             var hkID = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject),
@@ -91,8 +96,12 @@ final class HotKey {
         }, 1, &eventType, selfPtr, &handlerRef)
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x5354_524B), id: id) // 'STRK'
-        RegisterEventHotKey(keyCode, modifiers, hotKeyID,
-                            GetApplicationEventTarget(), 0, &hotKeyRef)
+        let err = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
+                                      GetEventDispatcherTarget(), 0, &hotKeyRef)
+        if err != noErr {
+            // Most likely another app already owns this combo.
+            NSLog("Stark hotkey registration failed: keyCode=%d mods=%d err=%d", keyCode, modifiers, err)
+        }
     }
 
     deinit {

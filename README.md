@@ -37,9 +37,18 @@ Stark is the counter-argument:
 
 ## How it works
 
-Select text anywhere, press **⌃⌥S** (configurable), and the rewrite replaces
-your selection in place. One press, Grammarly-style — except the "backend" is
-a process on `127.0.0.1`.
+<img src="assets/demo.gif" width="100%" alt="Stark demo: a typo-filled sentence is selected, the hotkey is pressed, and the polished version replaces it in place">
+
+1. **Select text** — in any app.
+2. **Press the hotkey** — default ⌃⌥S, yours to change.
+3. **Done.** The rewrite lands where the text was. Your clipboard is untouched.
+
+Nothing selected? Stark works on your clipboard instead and lets you pick a
+style. First run: allow Accessibility (System Settings → Privacy & Security)
+— that's how the invisible copy/paste happens.
+
+<details>
+<summary><b>Under the hood</b></summary>
 
 ```mermaid
 sequenceDiagram
@@ -48,7 +57,7 @@ sequenceDiagram
     participant Stark as Stark (menu bar)
     participant Model as stark-1.5b<br/>127.0.0.1:8765
 
-    You->>App: select text · press ⌃⌥S
+    You->>App: select text · press the hotkey
     Stark->>App: invisible ⌘C — captures the selection
     Stark->>Model: one-word style tag + your text
     Model-->>Stark: the rewrite, streaming
@@ -56,11 +65,7 @@ sequenceDiagram
     Note over You,Model: Clipboard restored. Nothing left the Mac.
 ```
 
-In-place mode needs the Accessibility permission (System Settings → Privacy &
-Security → Accessibility → Stark) — that's how the invisible ⌘C/⌘V happens
-for you. Without it, or with nothing selected, Stark falls back to clipboard
-mode: copy text, press the hotkey, pick a style, and the rewrite lands on
-your clipboard.
+</details>
 
 ## One suit, eight loadouts
 
@@ -75,11 +80,12 @@ your clipboard.
 | 7 | Prompt enhance | sharpens a vague LLM prompt into a precise one |
 | 8 | Expand | grows a terse note into a fuller message — same meaning, no invented facts |
 
-In-place rewrites use one style — `polish` by default. The rest live in the
-menu-bar **Rewrite As** submenu (also one-shot when text is selected) and in
-the clipboard-mode picker. Styles can follow the app you're in: Slack can
-default to friendly-then-concise, Mail to formal, your editor to typos-only —
-see personas in the appendix.
+The one-press rewrite uses your default style — pick it in the menu bar →
+**Default Style** (`polish` out of the box). The rest live in the **Rewrite
+As** submenu (also one-shot when text is selected) and in the clipboard-mode
+picker. Styles can follow the app you're in: Slack can default to
+friendly-then-concise, Mail to formal, your editor to typos-only — see
+personas in the appendix.
 
 ## Suit up
 
@@ -115,6 +121,11 @@ then select some text and press **⌃⌥S**.
 
 A faster/smaller 0.5B variant is also trained (`model/adapters-0.5b`) — see
 the appendix for switching.
+
+## Where this is going
+
+Signed releases, custom user-trained styles, translate/summarize, a CLI —
+the plan lives in [ROADMAP.md](ROADMAP.md).
 
 <details>
 <summary><b>Appendix — technical details</b></summary>
@@ -206,8 +217,9 @@ Optional `~/.stark/config.json` (all fields required if the file exists):
 
 `hotkey` is any combination of `cmd`/`ctrl`/`alt`/`shift` plus one letter or
 digit, e.g. `"cmd+shift+9"`. Invalid specs fall back to `ctrl+alt+s`.
-`preset` is the style tag used for one-shot in-place rewrites: `polish`,
-`concise`, `formal`, `friendly`, `typos`, `bullets`, `prompt`, or `expand`.
+`preset` is the style tag used for one-shot in-place rewrites (`polish`,
+`concise`, `formal`, `friendly`, `typos`, `bullets`, `prompt`, or `expand`) —
+easier set from the menu bar → **Default Style**.
 Per-app persona chains (e.g. Slack → friendly then concise) are configured in
 the onboarding flow (menu bar → Run Setup…) and stored under `personas`.
 
