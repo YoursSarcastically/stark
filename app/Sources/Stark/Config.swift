@@ -17,6 +17,8 @@ struct Config: Codable {
     var dictionary: [String] = []
     /// Aura: log accepted rewrites as local training pairs (opt-in).
     var aura: Bool = false
+    /// Predictive typing: ghost-text suggestions as you type, anywhere (opt-in).
+    var completion: Bool = false
     var onboarded: Bool = false
 
     static let defaultPersonas: [String: [String]] = [
@@ -47,6 +49,7 @@ struct Config: Codable {
         personas = try c.decodeIfPresent([String: [String]].self, forKey: .personas) ?? d.personas
         dictionary = try c.decodeIfPresent([String].self, forKey: .dictionary) ?? d.dictionary
         aura = try c.decodeIfPresent(Bool.self, forKey: .aura) ?? d.aura
+        completion = try c.decodeIfPresent(Bool.self, forKey: .completion) ?? d.completion
         onboarded = try c.decodeIfPresent(Bool.self, forKey: .onboarded) ?? d.onboarded
     }
 
