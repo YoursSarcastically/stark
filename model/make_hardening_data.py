@@ -119,7 +119,56 @@ FRAGMENTS = [
     ("nope not yet", "Nope, not yet."),
 ]
 
-ALL = QUESTIONS + IMPERATIVES + ASSISTANT_BAIT + FRAGMENTS
+# Short, informal, list-shaped notes. The model's worst failure mode on these
+# is INVENTION: "I need 3 things - dinner sleep and meditation" came back as
+# "Three things to make dinner, sleep, and meditate - no one else has to know."
+# It added a clause the user never wrote and changed nouns into verbs. Every
+# pair here fixes only punctuation, casing and grammar; nothing is added, and
+# no word is swapped for a different part of speech.
+NO_INVENTION = [
+    ("I need 3 things - dinner sleep and meditation",
+     "I need three things: dinner, sleep, and meditation."),
+    ("todo today - groceries laundry and the tax form",
+     "To do today: groceries, laundry, and the tax form."),
+    ("bring - passport charger and headphones",
+     "Bring your passport, charger, and headphones."),
+    ("agenda: budget, hiring, roadmap",
+     "Agenda: budget, hiring, roadmap."),
+    ("3 blockers - api keys, staging access, test data",
+     "Three blockers: API keys, staging access, and test data."),
+    ("need to buy milk eggs bread",
+     "I need to buy milk, eggs, and bread."),
+    ("call mom, book flights, renew insurance",
+     "Call Mom, book flights, and renew the insurance."),
+    ("this week - finish the deck, review PRs, ship the fix",
+     "This week: finish the deck, review PRs, and ship the fix."),
+    ("two options - rebuild it or patch it",
+     "Two options: rebuild it, or patch it."),
+    ("my goals for q3 are hiring, retention, and docs",
+     "My goals for Q3 are hiring, retention, and documentation."),
+    ("dinner at 8 then movie",
+     "Dinner at eight, then a movie."),
+    ("waiting on legal design and finance",
+     "I'm waiting on legal, design, and finance."),
+    ("still todo: tests, docs, changelog",
+     "Still to do: tests, docs, changelog."),
+    ("pros - cheap fast easy. cons - fragile",
+     "Pros: cheap, fast, easy. Cons: fragile."),
+    ("i want to focus on sleep exercise and reading",
+     "I want to focus on sleep, exercise, and reading."),
+    ("packing list - shoes jacket toothbrush",
+     "Packing list: shoes, jacket, toothbrush."),
+    ("we need more time money and people",
+     "We need more time, money, and people."),
+    ("notes from call - they want a discount and a longer trial",
+     "Notes from the call: they want a discount and a longer trial."),
+    ("remember - backup first then upgrade",
+     "Remember: back up first, then upgrade."),
+    ("kids school stuff - forms uniform shoes",
+     "Kids' school stuff: forms, uniform, shoes."),
+]
+
+ALL = QUESTIONS + IMPERATIVES + ASSISTANT_BAIT + FRAGMENTS + NO_INVENTION
 
 # Which presets each pair should teach. `typos` and `polish` carry the bulk of
 # the load because they're the ones a one-press rewrite actually uses; formal

@@ -36,14 +36,42 @@ final class CompletionEngine {
     private var enabled = false
     var isEnabled: Bool { enabled }
 
+    /// What we have watched the user type since the last reset.
+    ///
+    /// The Accessibility API is the *preferred* source for the text before the
+    /// caret, but plenty of apps lie: terminals, custom editors and some
+    /// Electron surfaces report an empty kAXValue or a caret offset of 0 while
+    /// the field visibly contains a sentence. Typing "hi how are you" into one
+    /// of those yielded "0 chars" from AX, so nothing was ever predicted.
+    ///
+    /// The keystroke tap sees every character regardless of what the app is
+    /// willing to admit, so this buffer works everywhere the tap does — which
+    /// is everywhere. AX is used when it returns MORE than we have (it knows
+    /// about text typed before Stark started watching, or pasted in); otherwise
+    /// this wins.
+    private var typed = ""
+    private var typedApp: pid_t = 0
+    /// Last length AX reported for the focused field, used to spot the field
+    /// being emptied (message sent, document cleared) without trusting AX's
+    /// absolute values, which several apps get wrong.
+    private var lastAXLength: Int?
+
     /// How long the user must pause before we spend a request.
-    private let debounce: TimeInterval = 0.45
-    /// Minimum characters before predicting; below this there's no signal.
-    private let minPrefix = 12
+    private let debounce: TimeInterval = 0.12
+    /// Minimum characters before predicting.
+    ///
+    /// This started at 12 and was simply wrong: real messages are short, and
+    /// "Hi how are" is 10 characters, so the engine sat silent through exactly
+    /// the sentences people actually type. Four is about the point where a
+    /// continuation stops being a coin flip — "Hi h" has no signal, "Hi how"
+    /// does.
+    private let minPrefix = 3
     private let maxPrefix = 480
 
     private let kVKTab: Int64 = 48
     private let kVKEscape: Int64 = 53
+    private let kVKDelete: Int64 = 51
+    private let kVKForwardDelete: Int64 = 117
 
     init(client: StarkClient) {
         self.client = client
@@ -58,9 +86,40 @@ final class CompletionEngine {
             completionLog.info("completion not started — Accessibility not granted")
             return false
         }
-        tap.onKey = { [weak self] code, flags, chars in
-            self?.handle(keyCode: code, flags: flags, characters: chars) ?? .typing
+        tap.onKey = { [weak self] code, chars, isDeletion in
+            self?.handle(keyCode: code, characters: chars, isDeletion: isDeletion)
         }
+        tap.onIntercept = { [weak self] which in
+            guard let self else { return }
+            switch which {
+            case .accept:
+                completionLog.info("tab accept: \(self.suggestion, privacy: .public)")
+                self.acceptNextWord()
+            case .dismiss: self.clearSuggestion()
+            case .none: break
+            }
+        }
+        // Watch focus changes here instead of asking NSWorkspace on every
+        // keystroke: that lookup is cross-process, and doing it inside the tap
+        // callback was slow enough to drop characters mid-word.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                        as? NSRunningApplication
+                    completionLog.debug("focus -> \(app?.bundleIdentifier ?? "?", privacy: .public), buffer cleared")
+                    self.typedApp = app?.processIdentifier ?? 0
+                    self.typed = ""
+                    self.clearSuggestion()
+                    // Electron/Chromium expose nothing until asked; do it once
+                    // per app, on activation, not per keystroke.
+                    if let pid = app?.processIdentifier {
+                        AXBridge.enableEnhancedAccessibility(pid: pid)
+                    }
+                }
+            }
         guard tap.start() else {
             completionLog.error("completion tap failed to start")
             return false
@@ -80,35 +139,40 @@ final class CompletionEngine {
 
     // MARK: key handling
 
-    private func handle(keyCode: Int64, flags: CGEventFlags,
-                        characters: String) -> KeystrokeTap.Decision {
-        // Accept: Tab, but only while something is actually showing.
-        if keyCode == kVKTab, !suggestion.isEmpty, overlay.isVisible,
-           !flags.contains(.maskCommand), !flags.contains(.maskControl) {
-            acceptNextWord()
-            return .swallow
-        }
-        // Dismiss: Escape, likewise only when we're showing something.
-        if keyCode == kVKEscape, overlay.isVisible {
+    /// Runs on the main actor, AFTER the keystroke has already reached the app.
+    /// Nothing here can delay typing.
+    private func handle(keyCode: Int64, characters: String, isDeletion: Bool) {
+        // Arrow keys and Return move the caret; any suggestion is now stale.
+        // Return sends/commits in most apps and Escape abandons; either way the
+        // text the buffer describes is gone. Arrows move the caret elsewhere.
+        if (123...126).contains(keyCode) || keyCode == 36 || keyCode == 53 {
+            typed = ""
             clearSuggestion()
-            return .swallow
+            return
         }
-        // Any modifier chord (⌘C, ⌥→, …) is navigation or a command, not typing.
-        if flags.contains(.maskCommand) || flags.contains(.maskControl)
-            || flags.contains(.maskAlternate) {
-            clearSuggestion()
-            return .passthrough
-        }
-        // Arrow keys and Return move the caret; the old suggestion no longer applies.
-        if (123...126).contains(keyCode) || keyCode == 36 {
-            clearSuggestion()
-            return .passthrough
-        }
-
-        // Ordinary typing (or deletion) — the suggestion is stale either way.
         clearSuggestion()
+        updateTypedBuffer(characters: characters, isDeletion: isDeletion)
         schedulePrediction()
-        return .typing
+    }
+
+    /// Keep `typed` in step with the keystroke stream. Deliberately simple:
+    /// this is a hint for the model, not a model of the document. Focus changes
+    /// reset it via the workspace notification rather than a per-keystroke
+    /// lookup, which is what used to stall typing.
+    private func updateTypedBuffer(characters: String, isDeletion: Bool) {
+        if isDeletion {
+            if !typed.isEmpty { typed.removeLast() }
+            return
+        }
+        guard !characters.isEmpty else { return }
+        // Return/newline starts a fresh thought.
+        if characters == "\r" || characters == "\n" {
+            typed = ""
+            return
+        }
+        typed += characters
+        if typed.count > maxPrefix { typed.removeFirst(typed.count - maxPrefix) }
+        completionLog.debug("buffer[\(self.typed.count)] = \(self.typed, privacy: .public)")
     }
 
     // MARK: prediction
@@ -130,27 +194,77 @@ final class CompletionEngine {
 
     /// Reads the focused field and decides whether this is a moment worth
     /// spending a model request on.
-    private func context() -> (prefix: String, element: AXUIElement)? {
-        guard let element = AXBridge.focusedElement() else { return nil }
-        // Never read, never send, never suggest into a password field.
-        guard !AXBridge.isSecure(element) else { return nil }
-        guard AXBridge.isTextInput(element) else { return nil }
+    /// Why the last attempt produced nothing. Predictive typing fails silently
+    /// by nature — there is no error, just no suggestion — so the reason has to
+    /// be recoverable from the log or it's undebuggable in the field.
+    private var lastBail = ""
+    private func bail(_ reason: String) -> (prefix: String, element: AXUIElement?)? {
+        if reason != lastBail {
+            lastBail = reason
+            completionLog.info("no suggestion: \(reason, privacy: .public)")
+        }
+        return nil
+    }
 
-        // Chromium/Electron only answer AX queries once asked; do it lazily for
-        // whichever app is frontmost.
-        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
-            AXBridge.enableEnhancedAccessibility(pid: pid)
+    private func context() -> (prefix: String, element: AXUIElement?)? {
+        // Optional by design: apps that expose no accessibility tree still get
+        // suggestions from the keystroke buffer, shown as a chip rather than
+        // inline ghost text.
+        let element = AXBridge.focusedElement()
+
+        // Field changed under us, or the app says the field is now empty.
+        // `stringValue` distinguishes "" (definitely empty) from nil (the app
+        // won't say), so this fires only on real evidence and never punishes
+        // the apps that report nothing. Without it, sending a message left the
+        // buffer intact and the next suggestion came from text no longer on
+        // screen — a suggestion appearing over an empty field.
+        // Detecting "the field was emptied" has to be done on a CHANGE, never on
+        // an absolute reading. Google Docs reports an empty AX value even with a
+        // sentence on screen, so treating empty-as-empty cleared the buffer on
+        // every prediction and nothing was ever suggested. Likewise element
+        // identity: web content hands back a fresh AXUIElement each query, so
+        // CFEqual comparisons fire constantly and are useless here.
+        //
+        // A DROP is real evidence: AX said 20 characters a moment ago and says 0
+        // now, so the message was sent or the field cleared. An app that always
+        // says 0 never triggers it.
+        let axLength = element.flatMap { AXBridge.stringValue(of: $0)?.count }
+        if let axLength, let previous = lastAXLength, previous > 2, axLength == 0, !typed.isEmpty {
+            completionLog.debug("field emptied (\(previous) -> 0) — buffer cleared")
+            typed = ""
+            lastAXLength = axLength
+            return bail("field was cleared")
+        }
+        if let axLength { lastAXLength = axLength }
+
+        // Never read, never send, never suggest into a password field.
+        if let element, AXBridge.isSecure(element) {
+            typed = ""
+            return bail("secure field")
         }
 
-        guard let prefix = AXBridge.textBeforeCaret(of: element, maxChars: maxPrefix),
-              prefix.count >= minPrefix else { return nil }
-        // Only continue at the end of what's written — mid-document editing is
-        // a different job and suggestions there are almost always wrong.
-        guard AXBridge.caretAtEnd(of: element) else { return nil }
-        // Mid-word, the user is still choosing the word; wait for the space.
-        guard let last = prefix.last, last == " " || last == "," || last == "\n" ||
-                (last.isLetter == false && last.isNumber == false) || true
-        else { return nil }
+        // Trust whichever source has seen more of the sentence. AX wins when it
+        // works (it knows about text that predates Stark, and about pastes);
+        // the keystroke buffer covers every app where AX lies.
+        let axPrefix = element.flatMap {
+            AXBridge.textBeforeCaret(of: $0, maxChars: maxPrefix)
+        } ?? ""
+        // Whichever source saw more of the sentence wins. Google Docs and
+        // similar report a stale or truncated value (1 char while 4 were
+        // typed), so this is usually the keystroke buffer.
+        let useAX = axPrefix.count > typed.count
+        let prefix = useAX ? axPrefix : typed
+        guard prefix.count >= minPrefix else {
+            return bail("only \(prefix.count) chars available (ax \(axPrefix.count), typed \(typed.count)), need \(minPrefix)")
+        }
+        // The caret check may ONLY be applied to the source we actually used.
+        // Applying it to AX while predicting from the keystroke buffer is what
+        // silenced Google Docs: its caret data is as unreliable as its text, so
+        // a check against it rejected perfectly good buffer-derived prefixes.
+        if useAX, let element, !AXBridge.caretAtEnd(of: element) {
+            return bail("caret is mid-text, not at the end")
+        }
+        lastBail = ""
         return (prefix, element)
     }
 
@@ -174,18 +288,23 @@ final class CompletionEngine {
         }
     }
 
-    private func present(_ raw: String, prefix: String, element: AXUIElement) {
+    private func present(_ raw: String, prefix: String, element: AXUIElement?) {
         let text = Self.clean(raw, prefix: prefix)
         guard !text.isEmpty else { return }
         suggestion = text
         suggestedFor = prefix
+        // Only now may the tap swallow Tab.
+        tap.setArmed(true)
 
-        if let caret = AXBridge.caretRect(of: element) {
+        let caret = element.flatMap { AXBridge.caretRect(of: $0) }
+        if let element, let caret {
             let font = AXBridge.caretOffset(of: element)
                 .flatMap { AXBridge.fontAtCaret(of: element, caret: $0) }
             overlay.showInline(text, at: caret, font: font)
-        } else if let window = AXBridge.focusedWindowFrame() {
-            overlay.showPill(text, near: window)
+        } else {
+            // No caret geometry — anchor the chip to the window instead of
+            // dropping the suggestion entirely.
+            overlay.showChip(text, caret: caret, window: AXBridge.focusedWindowFrame())
         }
     }
 
@@ -199,11 +318,25 @@ final class CompletionEngine {
         s = s.replacingOccurrences(of: "\n", with: " ")
         if s.hasPrefix("\"") && s.hasSuffix("\"") { s = String(s.dropFirst().dropLast()) }
 
-        // Models sometimes echo the tail of the prompt; strip that overlap.
-        let tail = prefix.split(separator: " ").suffix(4).joined(separator: " ")
-        if !tail.isEmpty, s.lowercased().hasPrefix(tail.lowercased()) {
-            s = String(s.dropFirst(tail.count))
+        // Models very often restate the last words of the prompt: the prefix
+        // "hi how are you" comes back as "are you doing fine?", which would
+        // paste as "hi how are you are you doing fine?". Strip the LONGEST
+        // suffix of the prefix that the suggestion begins with — an exact
+        // fixed-width match misses every partial overlap like this one.
+        let lowerPrefix = prefix.lowercased()
+        let lowerSuggestion = s.lowercased()
+        var overlap = 0
+        let maxOverlap = min(lowerPrefix.count, lowerSuggestion.count)
+        if maxOverlap > 0 {
+            for n in stride(from: maxOverlap, through: 2, by: -1) {
+                let tail = String(lowerPrefix.suffix(n))
+                if lowerSuggestion.hasPrefix(tail) {
+                    overlap = n
+                    break
+                }
+            }
         }
+        if overlap > 0 { s = String(s.dropFirst(overlap)) }
         // One sentence is plenty for an inline suggestion.
         if let stop = s.firstIndex(where: { $0 == "." || $0 == "!" || $0 == "?" }) {
             s = String(s[...stop])
@@ -228,8 +361,9 @@ final class CompletionEngine {
         let word = String(s[s.startIndex..<afterWord])
         let rest = String(s[afterWord...])
 
-        TextTyper.type(word)
+        TextTyper.insert(word)
         suggestedFor += word
+        typed += word
 
         if rest.trimmingCharacters(in: .whitespaces).isEmpty {
             clearSuggestion()
@@ -249,5 +383,6 @@ final class CompletionEngine {
         suggestion = ""
         suggestedFor = ""
         overlay.hide()
+        tap.setArmed(false)
     }
 }

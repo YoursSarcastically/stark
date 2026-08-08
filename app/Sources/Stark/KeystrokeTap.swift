@@ -1,34 +1,54 @@
 import AppKit
 import CoreGraphics
+import os
 
 /// System-wide keyboard observer for predictive typing.
 ///
-/// This is an *active* `CGEventTap` (`.defaultTap`), unlike the listen-only one
-/// `HotKeyCenter` uses, because accepting a suggestion means swallowing the Tab
-/// keypress so the app never sees it. Tab is only ever swallowed while a
-/// suggestion is actually on screen; the rest of the time every key passes
-/// through untouched. Requires Accessibility.
+/// This is an *active* tap (`.defaultTap`) because accepting a suggestion means
+/// swallowing the Tab keypress so the app never sees it. That power comes with
+/// a hard constraint most implementations get wrong:
+///
+/// **An active tap sits in front of every keystroke the user types.** The
+/// callback runs synchronously before the frontmost app receives the event, so
+/// anything slow inside it stalls the user's typing. Do enough work and macOS
+/// gives up, fires `kCGEventTapDisabledByTimeout`, and keystrokes are dropped
+/// outright — which is exactly what happened here: an `NSWorkspace`
+/// cross-process lookup per keystroke was losing characters mid-word.
+///
+/// Two rules follow, and this file exists to enforce them:
+///
+///  1. **The tap runs on its own thread**, not the main run loop. Otherwise any
+///     main-thread stall — SwiftUI laying out the panel, a slow AX query — is a
+///     stall in the user's typing, system-wide.
+///  2. **The callback does the minimum**: check a flag, read the key, hand
+///     everything else to the main actor asynchronously. The only synchronous
+///     decision is swallow-or-pass, made from a pre-computed boolean.
 final class KeystrokeTap {
 
-    /// What the engine wants done with a key it recognises.
-    enum Decision {
-        case swallow       // we acted on it; the app must not see it
-        case passthrough   // let it through, and don't treat it as typing
-        case typing        // ordinary text input
-    }
+    /// Keys the tap may swallow, decided synchronously from `armed`.
+    enum Intercept { case none, accept, dismiss }
 
-    /// Called on the main actor for every keyDown. Returning `.swallow`
-    /// consumes the event.
-    var onKey: ((_ keyCode: Int64, _ flags: CGEventFlags, _ characters: String) -> Decision)?
+    /// Called on the MAIN actor, asynchronously, for every non-injected keyDown.
+    /// Never blocks the user's typing.
+    var onKey: ((_ keyCode: Int64, _ characters: String, _ isDeletion: Bool) -> Void)?
+    /// Called on the MAIN actor when an interception fired.
+    var onIntercept: ((Intercept) -> Void)?
+
+    /// Whether a suggestion is currently on screen. Written from the main actor,
+    /// read from the tap thread, so it's behind a lock — the only shared state.
+    private let lock = OSAllocatedUnfairLock(initialState: false)
+    func setArmed(_ armed: Bool) { lock.withLock { $0 = armed } }
 
     private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    private var thread: Thread?
+    private var runLoop: CFRunLoop?
 
-    /// Stamped onto events we synthesize so the tap can ignore its own output —
-    /// otherwise inserting a suggestion looks exactly like the user typing it,
-    /// and the engine immediately predicts from its own prediction.
+    /// Stamped onto events we synthesize so the tap ignores its own output —
+    /// otherwise inserting a suggestion looks like the user typing it.
     static let injectedMarker: Int64 = 0x57A2_C0DE
 
+    private let kVKTab: Int64 = 48
+    private let kVKEscape: Int64 = 53
     private let kVKDelete: Int64 = 51
     private let kVKForwardDelete: Int64 = 117
 
@@ -36,8 +56,7 @@ final class KeystrokeTap {
 
     @discardableResult
     func start() -> Bool {
-        guard tap == nil else { return true }
-        guard AXIsProcessTrusted() else { return false }
+        guard tap == nil, AXIsProcessTrusted() else { return false }
 
         let mask = (1 << CGEventType.keyDown.rawValue)
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
@@ -53,42 +72,73 @@ final class KeystrokeTap {
             },
             userInfo: selfPtr
         ) else { return false }
-
-        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
-        CGEvent.tapEnable(tap: t, enable: true)
         tap = t
-        source = src
+
+        // Dedicated thread with its own run loop. The tap must keep servicing
+        // keystrokes even while the main thread is busy rendering or waiting.
+        let ready = DispatchSemaphore(value: 0)
+        let th = Thread { [weak self] in
+            guard let self, let tap = self.tap else { ready.signal(); return }
+            self.runLoop = CFRunLoopGetCurrent()
+            let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
+            CGEvent.tapEnable(tap: tap, enable: true)
+            ready.signal()
+            while !Thread.current.isCancelled {
+                CFRunLoopRunInMode(.defaultMode, 0.5, false)
+            }
+        }
+        th.name = "com.local.stark.keystroke-tap"
+        // Above default so a busy UI thread can never starve keyboard handling.
+        th.qualityOfService = .userInteractive
+        th.start()
+        thread = th
+        ready.wait()
         return true
     }
 
     func stop() {
         if let t = tap { CGEvent.tapEnable(tap: t, enable: false) }
-        if let src = source { CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes) }
+        thread?.cancel()
+        if let rl = runLoop { CFRunLoopStop(rl) }
+        thread = nil
+        runLoop = nil
         tap = nil
-        source = nil
     }
 
+    /// Runs on the tap thread. Must stay in the microsecond range.
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // macOS disables a tap that takes too long in its callback. Re-arm
-        // rather than silently dying — this is why the callback below does no
-        // work beyond a dictionary lookup.
+        // macOS disables a tap whose callback overran. Re-arm immediately or
+        // the feature dies silently for the rest of the session.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             return Unmanaged.passUnretained(event)
         }
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
-
         if event.getIntegerValueField(.eventSourceUserData) == Self.injectedMarker {
             return Unmanaged.passUnretained(event)
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+        let armed = lock.withLock { $0 }
 
+        // The ONLY synchronous decision: swallow Tab/Escape while a suggestion
+        // is showing. Everything else passes through untouched.
+        if armed, !flags.contains(.maskCommand), !flags.contains(.maskControl) {
+            if keyCode == kVKTab {
+                DispatchQueue.main.async { [weak self] in self?.onIntercept?(.accept) }
+                return nil
+            }
+            if keyCode == kVKEscape {
+                DispatchQueue.main.async { [weak self] in self?.onIntercept?(.dismiss) }
+                return nil
+            }
+        }
+
+        let isDeletion = keyCode == kVKDelete || keyCode == kVKForwardDelete
         var characters = ""
-        let hasCommandLike = flags.contains(.maskCommand) || flags.contains(.maskControl)
-        if !hasCommandLike, keyCode != kVKDelete, keyCode != kVKForwardDelete {
+        if !isDeletion, !flags.contains(.maskCommand), !flags.contains(.maskControl) {
             var length = 0
             var buffer = [UniChar](repeating: 0, count: 8)
             event.keyboardGetUnicodeString(maxStringLength: 8,
@@ -97,26 +147,68 @@ final class KeystrokeTap {
             if length > 0 { characters = String(utf16CodeUnits: buffer, count: length) }
         }
 
-        // The tap callback runs on the main run loop, so the handler is already
-        // on the main actor — it must stay synchronous to decide swallow vs pass.
-        let decision = MainActor.assumeIsolated {
-            onKey?(keyCode, flags, characters) ?? .typing
+        // Hand off and get out of the way; the event continues to the app now.
+        DispatchQueue.main.async { [weak self] in
+            self?.onKey?(keyCode, characters, isDeletion)
         }
-        return decision == .swallow ? nil : Unmanaged.passUnretained(event)
+        return Unmanaged.passUnretained(event)
     }
 }
 
-/// Types text into the frontmost app by synthesising key events that carry the
-/// Unicode string directly. Unlike the rewrite path this never touches the
-/// pasteboard — accepting a word-by-word suggestion shouldn't clobber whatever
-/// the user copied earlier.
+/// Types text into the frontmost app by synthesising key events carrying the
+/// Unicode string. Never touches the pasteboard, so accepting a suggestion
+/// can't clobber whatever the user copied earlier.
 @MainActor
 enum TextTyper {
+    /// Insert accepted text into the frontmost app.
+    ///
+    /// Two strategies, because neither works everywhere:
+    ///
+    ///  - **Synthetic Unicode key events** leave the pasteboard alone, which is
+    ///    the polite thing to do, and work in native AppKit apps.
+    ///  - **Clipboard paste** works in the apps that ignore synthesized keys
+    ///    entirely — Google Docs and several Electron editors filter events
+    ///    that carry no real virtual keycode, so a Tab-accept silently does
+    ///    nothing there.
+    ///
+    /// Reliability wins: paste is the default, with the pasteboard saved and
+    /// restored around it so the user's clipboard survives.
+    static func insert(_ text: String) {
+        guard !text.isEmpty else { return }
+        let pb = NSPasteboard.general
+        let saved = pb.pasteboardItems?.compactMap { item -> [NSPasteboard.PasteboardType: Data] in
+            var dict: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types { if let d = item.data(forType: type) { dict[type] = d } }
+            return dict
+        } ?? []
+
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let vKeyV: CGKeyCode = 0x09
+        for keyDown in [true, false] {
+            guard let e = CGEvent(keyboardEventSource: source,
+                                  virtualKey: vKeyV, keyDown: keyDown) else { continue }
+            e.flags = .maskCommand
+            e.setIntegerValueField(.eventSourceUserData, value: KeystrokeTap.injectedMarker)
+            e.post(tap: .cghidEventTap)
+        }
+
+        // Restore once the paste has certainly been read.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            pb.clearContents()
+            for item in saved {
+                let entry = NSPasteboardItem()
+                for (type, data) in item { entry.setData(data, forType: type) }
+                pb.writeObjects([entry])
+            }
+        }
+    }
+
     static func type(_ text: String) {
         guard !text.isEmpty else { return }
         let source = CGEventSource(stateID: .combinedSessionState)
-        // Chunked: CGEvent's unicode payload is bounded, and long strings sent
-        // as one event get truncated by some apps.
         for chunk in text.chunked(into: 16) {
             var utf16 = Array(chunk.utf16)
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
