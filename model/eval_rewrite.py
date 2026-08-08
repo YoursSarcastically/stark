@@ -4,6 +4,11 @@ Regression suite for the rewrite model — specifically the failure that made
 Stark unusable: given a question, the model ANSWERS it instead of tidying it,
 and the answer silently replaces the user's text.
 
+There is no runtime guard behind this any more: whatever the model returns is
+what gets pasted over the user's selection. That makes this suite the only
+thing standing between a bad checkpoint and destroyed text, so run it before
+shipping any retrained model.
+
     python -m mlx_lm server --model model/stark-rewrite-1.5b --port 8798
     python eval_rewrite.py --port 8798
 

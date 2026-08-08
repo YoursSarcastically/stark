@@ -23,15 +23,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         super.init()
         vm.onDone = { [weak self] result in
             guard let self else { return }
-            // Never paste over the selection with something that isn't a rewrite
-            // of it. Replacing the user's sentence is destructive and silent, so
-            // a refusal they can see beats a confident wrong answer they can't undo.
-            if let rejection = RewriteGuard.check(input: self.vm.input,
-                                                  output: result,
-                                                  tag: self.vm.lastTags.last ?? "") {
-                self.vm.reportRejection(rejection.reason)
-                return
-            }
             self.lastOriginal = self.vm.input
             self.lastTarget = self.pasteTarget
             let target = self.pasteTarget

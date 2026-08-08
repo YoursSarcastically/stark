@@ -17,13 +17,6 @@ final class PolishVM: ObservableObject {
     /// Fired on successful completion in in-place mode (paste-back hook).
     var onDone: ((String) -> Void)?
 
-    /// The rewrite finished but failed `RewriteGuard`, so nothing was pasted.
-    /// The panel stays open showing what came back, so the user can judge it
-    /// and copy it themselves if it happens to be what they wanted.
-    func reportRejection(_ reason: String) {
-        state = .error("Not pasted — \(reason). Your text is unchanged.")
-    }
-
     let server: ServerManager
     private let client: StarkClient
     private var task: Task<Void, Never>?
