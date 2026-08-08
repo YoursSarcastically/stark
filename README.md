@@ -1,17 +1,68 @@
-# Stark ⚡
+<div align="center">
+  <img src="assets/logo.svg" width="170" alt="Stark logo — a gold bolt inside an arc-reactor ring">
+  <h1>Stark</h1>
+  <p><b>Grammarly, but better — and it never leaves your Mac.</b></p>
+  <p>
+    <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-0d1120">
+    <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white">
+    <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-ffc431">
+    <a href="https://huggingface.co/suraj10620/stark-1.5b"><img alt="Model on Hugging Face" src="https://img.shields.io/badge/🤗%20model-stark--1.5b-ffd21e"></a>
+  </p>
+</div>
 
-A tiny menu-bar app that rewrites whatever is on your clipboard — using a small
-language model fine-tuned on this Mac, running fully offline. Inspired by
-[pebble](https://github.com/gashiartim/pebble), but native (no Electron, no
-Ollama) and powered by our own model.
+**Your words, only better.** A small language model fine-tuned for rewriting,
+living in your menu bar, running entirely on your Mac's own silicon. No
+account. No cloud. No subscription. Airplane mode is a supported
+configuration.
 
-**Select text anywhere → press ⌃⌥S → the rewrite replaces your selection in
-place.** One press, Grammarly-style. Needs the Accessibility permission
-(System Settings → Privacy & Security → Accessibility → Stark); without it —
-or with nothing selected — Stark falls back to clipboard mode: copy text,
-press ⌃⌥S, pick a style, and the rewrite lands on your clipboard.
+## Why this exists
 
-## The eight styles
+Every mainstream writing assistant is a cloud service wearing a local UI. To
+fix a comma, it ships everything you type — investor updates, performance
+reviews, medical questions, the resignation letter you never sent — to
+servers you don't control, keeps it long enough to "improve the service", and
+bills you monthly for the privilege.
+
+A grammar checker shouldn't be a keylogger with good branding.
+
+Stark is the counter-argument:
+
+- **On-device.** A 1.5B-parameter model streams rewrites at ~97 tokens/sec on
+  Apple silicon, ~1 GB of RAM. Turn the Wi-Fi off; nothing changes.
+- **Instant.** ~0.1 s to first token. The rewrite lands before a cloud
+  round-trip would have finished its TLS handshake.
+- **Yours.** MIT app, Apache-2.0 model, fully synthetic seeded dataset — the
+  whole thing is reproducible end to end on one MacBook.
+- **Free.** Electricity sold separately.
+
+## How it works
+
+Select text anywhere, press **⌃⌥S** (configurable), and the rewrite replaces
+your selection in place. One press, Grammarly-style — except the "backend" is
+a process on `127.0.0.1`.
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant App as Slack / Mail / anywhere
+    participant Stark as Stark (menu bar)
+    participant Model as stark-1.5b<br/>127.0.0.1:8765
+
+    You->>App: select text · press ⌃⌥S
+    Stark->>App: invisible ⌘C — captures the selection
+    Stark->>Model: one-word style tag + your text
+    Model-->>Stark: the rewrite, streaming
+    Stark->>App: invisible ⌘V — pastes over the selection
+    Note over You,Model: Clipboard restored. Nothing left the Mac.
+```
+
+In-place mode needs the Accessibility permission (System Settings → Privacy &
+Security → Accessibility → Stark) — that's how the invisible ⌘C/⌘V happens
+for you. Without it, or with nothing selected, Stark falls back to clipboard
+mode: copy text, press the hotkey, pick a style, and the rewrite lands on
+your clipboard.
+
+## One suit, eight loadouts
 
 | Key | Style | What it does |
 |-----|-------|--------------|
@@ -24,36 +75,46 @@ press ⌃⌥S, pick a style, and the rewrite lands on your clipboard.
 | 7 | Prompt enhance | sharpens a vague LLM prompt into a precise one |
 | 8 | Expand | grows a terse note into a fuller message — same meaning, no invented facts |
 
-## Run it
+In-place rewrites use one style — `polish` by default. The rest live in the
+menu-bar **Rewrite As** submenu (also one-shot when text is selected) and in
+the clipboard-mode picker. Styles can follow the app you're in: Slack can
+default to friendly-then-concise, Mail to formal, your editor to typos-only —
+see personas in the appendix.
+
+## Suit up
 
 ```bash
-# 1. Build the app (one time)
-cd ~/Stark/app && ./make_app.sh
+git clone https://github.com/YoursSarcastically/stark.git ~/Stark
+cd ~/Stark
 
-# 2. Launch — the app starts the model server itself
-open ~/Stark/app/build/Stark.app
+# 1. The engine — download the fused model…
+pip install -U huggingface_hub
+hf download suraj10620/stark-1.5b --local-dir model/stark-1.5b
+#    …or forge your own from scratch (see appendix — one seeded script, ~3 min of training)
+
+# 2. The suit — build the app (needs Xcode command line tools)
+cd app && ./make_app.sh
+
+# 3. Ignition
+open build/Stark.app
 ```
 
-Give the server ~10 seconds to warm up (menu-bar icon → "Model server: running"),
-then select some text and press **⌃⌥S** (configurable — see the appendix).
-In-place rewrites use one style — `polish` by default; the other styles are in
-the menu-bar **Rewrite As** submenu (also one-shot when text is selected) and
-in the clipboard-mode picker.
-
-Everything runs on `127.0.0.1`. Nothing ever leaves the machine — after the
-one-time model download, it works with Wi-Fi off.
+The server needs a Python with `mlx-lm` (`pip install mlx-lm`); point the
+`python` field of `~/.stark/config.json` at it if it isn't the default. Give
+the model ~10 seconds to warm up (menu-bar icon → "Model server: running"),
+then select some text and press **⌃⌥S**.
 
 ## Why it's fast and small
 
-- The model is a 4-bit **Qwen2.5-1.5B** with a LoRA adapter trained here on the
-  M4 — about **1 GB of RAM** while running, well under the 4 GB budget.
-- The fine-tune bakes each style into a **one-word system tag** (`polish`,
-  `concise`, …), so there's almost no prompt to process and the model answers
-  with the rewrite only — no "Here's your polished text!" preamble to wait for.
-- The app itself is native Swift, ~400 KB.
+- The model is a 4-bit **Qwen2.5-1.5B** with a LoRA fine-tune baked in,
+  trained and fused on a MacBook — about **1 GB of RAM** while running.
+- Each style is a **one-word system tag** (`polish`, `concise`, …), so
+  there's almost no prompt to process and the model answers with the rewrite
+  only — no "Here's your polished text!" preamble to wait for.
+- The app itself is native Swift, ~400 KB, zero dependencies.
 
-A faster/smaller 0.5B variant is also trained (`model/adapters-0.5b`) — see the
-appendix for switching.
+A faster/smaller 0.5B variant is also trained (`model/adapters-0.5b`) — see
+the appendix for switching.
 
 <details>
 <summary><b>Appendix — technical details</b></summary>
@@ -62,6 +123,8 @@ appendix for switching.
 
 ```
 Stark/
+├── assets/                  # logo
+├── design/                  # product/onboarding design pitch (HTML)
 ├── model/
 │   ├── make_stark_data.py   # generates the synthetic dataset (207 pairs, 8 presets)
 │   ├── data/                # train.jsonl / valid.jsonl (regenerated by make_stark_data.py)
@@ -73,6 +136,17 @@ Stark/
 ├── server/run_server.sh     # standalone server (app normally manages this)
 └── app/                     # native Swift menu-bar app (SwiftPM)
     └── make_app.sh          # builds build/Stark.app
+```
+
+### The pipeline
+
+```mermaid
+flowchart LR
+    A["make_stark_data.py<br/>207 synthetic pairs, seeded"] --> B["train_stark.sh<br/>LoRA · 150 iters"]
+    B --> C["mlx_lm fuse<br/>adapter + base"]
+    C --> D["stark-1.5b<br/>fused model"]
+    D --> E["mlx_lm server<br/>127.0.0.1:8765"]
+    E --> F["menu-bar app"]
 ```
 
 The trained weights aren't in this repo. Either download the fused model from
@@ -96,7 +170,6 @@ python -m mlx_lm fuse --model mlx-community/Qwen2.5-1.5B-Instruct-4bit \
   checkpoint every 25 iters. The served model is the final adapter fused into
   a standalone model with `mlx_lm fuse` (the mlx_lm 0.31.3 server silently
   ignores `--adapter-path`, so fusing is required, not optional).
-- Regenerate data / retrain / fuse: see the commands under Layout above.
 
 ### Serving
 
@@ -135,6 +208,8 @@ Optional `~/.stark/config.json` (all fields required if the file exists):
 digit, e.g. `"cmd+shift+9"`. Invalid specs fall back to `ctrl+alt+s`.
 `preset` is the style tag used for one-shot in-place rewrites: `polish`,
 `concise`, `formal`, `friendly`, `typos`, `bullets`, `prompt`, or `expand`.
+Per-app persona chains (e.g. Slack → friendly then concise) are configured in
+the onboarding flow (menu bar → Run Setup…) and stored under `personas`.
 
 ### Long texts
 
@@ -166,4 +241,12 @@ only the ⌘C/⌘V posting for in-place mode does), `NSPanel` +
 `NSHostingView` for the picker, SSE streaming from the local server,
 `NSPasteboard` in/out. `LSUIElement` so there's no Dock icon.
 
+### Credits
+
+Inspired by [pebble](https://github.com/gashiartim/pebble), but native (no
+Electron, no Ollama) and powered by our own model. Onboarding backgrounds
+from [Unsplash](https://unsplash.com).
+
 </details>
+
+<p align="center"><sub>Built on a MacBook, not in a data center. ⚡</sub></p>
