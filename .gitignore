@@ -1,0 +1,12 @@
+.DS_Store
+
+# Build artifacts
+app/.build/
+app/build/
+
+# Model weights — fused models live on Hugging Face, adapters are reproducible
+model/adapters-*/
+model/stark-*/
+
+# Generated dataset (make_stark_data.py is seeded — regenerating is identical)
+model/data/

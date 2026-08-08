@@ -1,0 +1,132 @@
+{
+  "tuned": {
+    "polish": {
+      "output": "We were supposed to send the report Friday, but the data pipeline was broken, so it's delayed to Monday.",
+      "ttft_s": 0.599,
+      "total_s": 1.01,
+      "gen_tps": 59.7,
+      "prompt_tps": 63.6,
+      "peak_mem_gb": 1.01,
+      "clean_start": true
+    },
+    "concise": {
+      "output": "I just wanted to reach out to see if you might have availability next week for a quick call to discuss the project.",
+      "ttft_s": 0.169,
+      "total_s": 0.571,
+      "gen_tps": 63.7,
+      "prompt_tps": 613.5,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "formal": {
+      "output": "Hey, the build is failing again — could someone please take a look?",
+      "ttft_s": 0.137,
+      "total_s": 0.39,
+      "gen_tps": 65.6,
+      "prompt_tps": 486.7,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "friendly": {
+      "output": "Thank you for your submission — we appreciate the effort, but it's missing the necessary documentation.",
+      "ttft_s": 0.133,
+      "total_s": 0.456,
+      "gen_tps": 63.9,
+      "prompt_tps": 463.1,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "typos": {
+      "output": "The new dashboard is definitely faster, but there are still some issues with the export button.",
+      "ttft_s": 0.161,
+      "total_s": 0.477,
+      "gen_tps": 63.4,
+      "prompt_tps": 392.0,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "bullets": {
+      "output": "- Freeze the code by Tuesday\n- Notify all enterprise customers by email\n- Prepare the rollback script\n- Update the FAQ with the new one",
+      "ttft_s": 0.324,
+      "total_s": 0.822,
+      "gen_tps": 61.6,
+      "prompt_tps": 488.4,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "prompt": {
+      "output": "Write about remote work for 500 words. Cover: the benefits, challenges, and best practices for remote teams. Use specific examples and statistics where relevant. Keep it under 500 words if possible.",
+      "ttft_s": 0.149,
+      "total_s": 0.882,
+      "gen_tps": 62.3,
+      "prompt_tps": 214.9,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    }
+  },
+  "base": {
+    "polish": {
+      "output": "I understand that the report was delayed due to the data pipeline being broken. It's important to keep everyone informed about the status of the report and any potential delays. Let's ensure that the report is sent on time to avoid any further issues. Is there anything specific you need help with to expedite the process?",
+      "ttft_s": 0.153,
+      "total_s": 0.956,
+      "gen_tps": 81.1,
+      "prompt_tps": 382.5,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "concise": {
+      "output": "Hello! I'm sorry, but I'm currently unavailable to take calls. Is there anything else I can assist you with?",
+      "ttft_s": 0.144,
+      "total_s": 0.465,
+      "gen_tps": 84.6,
+      "prompt_tps": 780.7,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "formal": {
+      "output": "I'm sorry to hear that the build is breaking again. I'll check it out as soon as possible. Is there anything specific you need help with?",
+      "ttft_s": 0.117,
+      "total_s": 0.518,
+      "gen_tps": 82.9,
+      "prompt_tps": 647.3,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "friendly": {
+      "output": "Understood. Please provide the missing documentation for your submission.",
+      "ttft_s": 0.118,
+      "total_s": 0.28,
+      "gen_tps": 86.7,
+      "prompt_tps": 601.8,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "typos": {
+      "output": "The new dashboard is definitely faster, but there are still some issues with the export button.",
+      "ttft_s": 0.141,
+      "total_s": 0.383,
+      "gen_tps": 82.8,
+      "prompt_tps": 488.9,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    },
+    "bullets": {
+      "output": "Here's a summary of the tasks you need to complete for launch day:\n\n1. **Freeze the code by Tuesday**:\n   - Ensure all changes are committed to the main branch.\n   - Perform a final build to test the code thoroughly.\n   - Prepare a detailed checklist of changes to be frozen.\n\n2. **Notify all enterprise customers by email**:\n   - Create a template email to send to each customer.\n   - Include a link to the new version of the software.\n   - Mention the date of the launch and the date of the freeze.\n\n3. **Prepare the rollback script**:\n   - Document the rollback process in a separate document.\n   - Include a checklist of steps to revert to the previous version.\n\n4. **Make sure support has the new FAQ**:\n   - Update the FAQ section on the support website.\n   - Include the new FAQ in the documentation for users.\n\nBy completing these tasks, you'll ensure a smooth transition to the new version of the software and minimize any disruptions to your enterprise customers.",
+      "ttft_s": 0.142,
+      "total_s": 2.776,
+      "gen_tps": 80.2,
+      "prompt_tps": 613.1,
+      "peak_mem_gb": 1.03,
+      "clean_start": false
+    },
+    "prompt": {
+      "output": "Remote work, also known as telecommuting or working from home, has become increasingly popular in recent years. It offers numerous benefits, including increased work-life balance, reduced commuting time, and the ability to work from anywhere. However, remote work also presents challenges, such as maintaining productivity, staying connected with colleagues, and managing distractions.\n\nOne of the main advantages of remote work is the flexibility it offers. Employees can work when they want, as long as they meet their deadlines. This can be particularly beneficial for individuals who have other commitments, such as children or a spouse, or who need to manage their time more carefully.\n\nAnother benefit of remote work is the ability to work from anywhere. This can be particularly appealing for individuals who live in areas with high living costs or who need to travel frequently. It also allows for a more comfortable work environment, as employees can choose a location that suits their preferences.\n\nHowever, remote work also presents challenges. One of the biggest challenges is maintaining productivity. Remote workers need to be disciplined and motivated to stay on track with their work. They also need to be able to manage their time effectively and avoid distractions.\n\nAnother challenge is staying connected with colleagues. Remote workers need to be able to communicate effectively with their team members, even if they are not physically present. This can be particularly challenging if team members are located in different time zones or if they have different work schedules.\n\nFinally, remote workers need to be able to manage distractions. They need to be able to focus on their work and avoid interruptions from family members, pets, or other distractions.\n\nOverall, remote work offers numerous benefits, but it also presents challenges. However, with the right tools and strategies, remote work can be a successful and fulfilling way to work.",
+      "ttft_s": 0.121,
+      "total_s": 4.525,
+      "gen_tps": 80.2,
+      "prompt_tps": 345.0,
+      "peak_mem_gb": 1.03,
+      "clean_start": true
+    }
+  }
+}

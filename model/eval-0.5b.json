@@ -1,0 +1,67 @@
+{
+  "tuned": {
+    "polish": {
+      "output": "We were supposed to send the report on Friday, but the data pipeline was broken, so it took Monday to get the report.",
+      "ttft_s": 0.287,
+      "total_s": 0.507,
+      "gen_tps": 126.8,
+      "prompt_tps": 152.6,
+      "peak_mem_gb": 0.36,
+      "clean_start": true
+    },
+    "concise": {
+      "output": "Hey, just wanted to let you know if you have any time to spare in the course of next week, would be really great to have a chat!",
+      "ttft_s": 0.105,
+      "total_s": 0.368,
+      "gen_tps": 125.0,
+      "prompt_tps": 1517.6,
+      "peak_mem_gb": 0.37,
+      "clean_start": true
+    },
+    "formal": {
+      "output": "Hey, could someone take a look at the build over at the staging environment? The numbers look off, and we need to find out what's wrong before we can fix it?",
+      "ttft_s": 0.098,
+      "total_s": 0.382,
+      "gen_tps": 133.0,
+      "prompt_tps": 975.5,
+      "peak_mem_gb": 0.37,
+      "clean_start": true
+    },
+    "friendly": {
+      "output": "Thank you so much for your submission. Please ensure that the fields are left empty before submitting your submission.",
+      "ttft_s": 0.096,
+      "total_s": 0.274,
+      "gen_tps": 128.0,
+      "prompt_tps": 1031.7,
+      "peak_mem_gb": 0.37,
+      "clean_start": true
+    },
+    "typos": {
+      "output": "The new dashboard is definitely faster, but there are still some issues with the export button.",
+      "ttft_s": 0.103,
+      "total_s": 0.258,
+      "gen_tps": 127.2,
+      "prompt_tps": 1007.6,
+      "peak_mem_gb": 0.37,
+      "clean_start": true
+    },
+    "bullets": {
+      "output": "- Freeze the code by Tuesday\n- Notify all enterprise customers by email\n- Prepare the rollback script\n- Make sure support has the new FAQ",
+      "ttft_s": 0.104,
+      "total_s": 0.35,
+      "gen_tps": 125.0,
+      "prompt_tps": 1237.5,
+      "peak_mem_gb": 0.37,
+      "clean_start": true
+    },
+    "prompt": {
+      "output": "Write a one-page email to a manager explaining why you are requesting remote work. Include: a) why it is important, b) a few reasons why it might be a good idea, c) a few reasons why it might be a bit confusing.",
+      "ttft_s": 0.094,
+      "total_s": 0.526,
+      "gen_tps": 122.5,
+      "prompt_tps": 597.8,
+      "peak_mem_gb": 0.37,
+      "clean_start": true
+    }
+  }
+}
