@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="assets/logo.svg" width="170" alt="Stark logo — a gold bolt inside an arc-reactor ring">
+  <img src="assets/logo.svg" width="170" alt="Stark logo: a gold bolt inside an arc-reactor ring">
   <h1>Stark</h1>
-  <p><b>Grammarly, but better — and it never leaves your Mac.</b></p>
+  <p><b>Grammarly, but better. And it never leaves your Mac.</b></p>
   <p>
     <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-0d1120">
     <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white">
@@ -18,10 +18,10 @@ configuration.
 ## Why this exists
 
 Every mainstream writing assistant is a cloud service wearing a local UI. To
-fix a comma, it ships everything you type — investor updates, performance
-reviews, medical questions, the resignation letter you never sent — to
-servers you don't control, keeps it long enough to "improve the service", and
-bills you monthly for the privilege.
+fix a comma, it ships everything you type (investor updates, performance
+reviews, medical questions, the resignation letter you never sent) to servers
+you don't control, keeps it long enough to "improve the service", and bills
+you monthly for the privilege.
 
 A grammar checker shouldn't be a keylogger with good branding.
 
@@ -31,7 +31,7 @@ Stark is the counter-argument:
   Apple silicon, ~1 GB of RAM. Turn the Wi-Fi off; nothing changes.
 - **Instant.** ~0.1 s to first token. The rewrite lands before a cloud
   round-trip would have finished its TLS handshake.
-- **Yours.** MIT app, Apache-2.0 model, fully synthetic seeded dataset — the
+- **Yours.** MIT app, Apache-2.0 model, fully synthetic seeded dataset. The
   whole thing is reproducible end to end on one MacBook.
 - **Free.** Electricity sold separately.
 
@@ -39,13 +39,15 @@ Stark is the counter-argument:
 
 <img src="assets/demo.gif" width="100%" alt="Stark demo: a typo-filled sentence is selected, the hotkey is pressed, and the polished version replaces it in place">
 
-1. **Select text** — in any app.
-2. **Press the hotkey** — default ⌃⌥S, yours to change.
-3. **Done.** The rewrite lands where the text was. Your clipboard is untouched.
+1. **Select text.** Any app.
+2. **Press the hotkey** (default ⌃⌥S, yours to change).
+3. **Done.** The rewrite lands where the text was. Your clipboard is
+   untouched. Your secrets stay unshipped.
 
 Nothing selected? Stark works on your clipboard instead and lets you pick a
-style. First run: allow Accessibility (System Settings → Privacy & Security)
-— that's how the invisible copy/paste happens.
+style. First run: allow Accessibility (System Settings → Privacy & Security),
+which is how the invisible copy/paste happens. It's the only permission Stark
+asks for. There's no network permission because there's no network code.
 
 <details>
 <summary><b>Under the hood</b></summary>
@@ -58,10 +60,10 @@ sequenceDiagram
     participant Model as stark-1.5b<br/>127.0.0.1:8765
 
     You->>App: select text · press the hotkey
-    Stark->>App: invisible ⌘C — captures the selection
+    Stark->>App: invisible ⌘C (captures the selection)
     Stark->>Model: one-word style tag + your text
     Model-->>Stark: the rewrite, streaming
-    Stark->>App: invisible ⌘V — pastes over the selection
+    Stark->>App: invisible ⌘V (pastes over the selection)
     Note over You,Model: Clipboard restored. Nothing left the Mac.
 ```
 
@@ -75,16 +77,16 @@ sequenceDiagram
 | 2 | Concise | says the same thing in fewer words |
 | 3 | Formal | professional tone |
 | 4 | Friendly | warm, casual tone |
-| 5 | Fix typos | spelling only — never rephrases |
+| 5 | Fix typos | spelling only, never rephrases |
 | 6 | Bullets | turns prose into a markdown bullet list |
 | 7 | Prompt enhance | sharpens a vague LLM prompt into a precise one |
-| 8 | Expand | grows a terse note into a fuller message — same meaning, no invented facts |
+| 8 | Expand | grows a terse note into a fuller message: same meaning, no invented facts |
 
-The one-press rewrite uses your default style — pick it in the menu bar →
+The one-press rewrite uses your default style. Pick it in the menu bar →
 **Default Style** (`polish` out of the box). The rest live in the **Rewrite
 As** submenu (also one-shot when text is selected) and in the clipboard-mode
 picker. Styles can follow the app you're in: Slack can default to
-friendly-then-concise, Mail to formal, your editor to typos-only — see
+friendly-then-concise, Mail to formal, your editor to typos-only. See
 personas in the appendix.
 
 ## Suit up
@@ -93,15 +95,15 @@ personas in the appendix.
 git clone https://github.com/YoursSarcastically/stark.git ~/Stark
 cd ~/Stark
 
-# 1. The engine — download the fused model…
+# 1. The engine: download the fused model…
 pip install -U huggingface_hub
 hf download suraj10620/stark-1.5b --local-dir model/stark-1.5b
-#    …or forge your own from scratch (see appendix — one seeded script, ~3 min of training)
+#    …or forge your own from scratch (see appendix; one seeded script, ~3 min of training)
 
-# 2. The suit — build the app (needs Xcode command line tools)
+# 2. The suit: build the app (needs Xcode command line tools)
 cd app && ./make_app.sh
 
-# 3. Ignition
+# 3. Ignition (arc reactor optional; Apple silicon will do)
 open build/Stark.app
 ```
 
@@ -113,22 +115,22 @@ then select some text and press **⌃⌥S**.
 ## Why it's fast and small
 
 - The model is a 4-bit **Qwen2.5-1.5B** with a LoRA fine-tune baked in,
-  trained and fused on a MacBook — about **1 GB of RAM** while running.
+  trained and fused on a MacBook; about **1 GB of RAM** while running.
 - Each style is a **one-word system tag** (`polish`, `concise`, …), so
   there's almost no prompt to process and the model answers with the rewrite
-  only — no "Here's your polished text!" preamble to wait for.
+  only: no "Here's your polished text!" preamble to wait for.
 - The app itself is native Swift, ~400 KB, zero dependencies.
 
-A faster/smaller 0.5B variant is also trained (`model/adapters-0.5b`) — see
+A faster/smaller 0.5B variant is also trained (`model/adapters-0.5b`); see
 the appendix for switching.
 
 ## Where this is going
 
-Signed releases, custom user-trained styles, translate/summarize, a CLI —
+Signed releases, custom user-trained styles, translate/summarize, a CLI:
 the plan lives in [ROADMAP.md](ROADMAP.md).
 
 <details>
-<summary><b>Appendix — technical details</b></summary>
+<summary><b>Appendix: technical details</b></summary>
 
 ### Layout
 
@@ -143,7 +145,7 @@ Stark/
 │   ├── eval_stark.py        # held-out eval + latency/memory benchmark
 │   ├── aura_train.py        # optional: retrain on your own accepted rewrites
 │   ├── adapters-1.5b/       # LoRA adapter checkpoints (not in git)
-│   └── stark-1.5b/          # fused model the app serves (not in git — see below)
+│   └── stark-1.5b/          # fused model the app serves (not in git; see below)
 ├── server/run_server.sh     # standalone server (app normally manages this)
 └── app/                     # native Swift menu-bar app (SwiftPM)
     └── make_app.sh          # builds build/Stark.app
@@ -175,9 +177,9 @@ python -m mlx_lm fuse --model mlx-community/Qwen2.5-1.5B-Instruct-4bit \
 ### Model & training
 
 - Base: `mlx-community/Qwen2.5-1.5B-Instruct-4bit` (QLoRA on the quantized model).
-- Data: fully synthetic — hand-authored rewrite pairs per preset plus
+- Data: fully synthetic. Hand-authored rewrite pairs per preset plus
   programmatic typo-corruption for the `typos` preset. No customer data.
-- Training: `./train_stark.sh 1.5b` — 150 iters, lr 1e-4, batch 4, 16 layers,
+- Training: `./train_stark.sh 1.5b`: 150 iters, lr 1e-4, batch 4, 16 layers,
   checkpoint every 25 iters. The served model is the final adapter fused into
   a standalone model with `mlx_lm fuse` (the mlx_lm 0.31.3 server silently
   ignores `--adapter-path`, so fusing is required, not optional).
@@ -218,8 +220,8 @@ Optional `~/.stark/config.json` (all fields required if the file exists):
 `hotkey` is any combination of `cmd`/`ctrl`/`alt`/`shift` plus one letter or
 digit, e.g. `"cmd+shift+9"`. Invalid specs fall back to `ctrl+alt+s`.
 `preset` is the style tag used for one-shot in-place rewrites (`polish`,
-`concise`, `formal`, `friendly`, `typos`, `bullets`, `prompt`, or `expand`) —
-easier set from the menu bar → **Default Style**.
+`concise`, `formal`, `friendly`, `typos`, `bullets`, `prompt`, or `expand`).
+Easier: set it from the menu bar → **Default Style**.
 Per-app persona chains (e.g. Slack → friendly then concise) are configured in
 the onboarding flow (menu bar → Run Setup…) and stored under `personas`.
 
@@ -227,8 +229,8 @@ the onboarding flow (menu bar → Run Setup…) and stored under `personas`.
 
 The fine-tune was trained on short pairs, so a whole document in one request
 drops paragraphs and stops fixing typos past a few hundred words. The client
-therefore splits long inputs (>500 chars) into paragraph chunks — sentence
-groups for oversized paragraphs — rewrites each separately, and reassembles.
+therefore splits long inputs (>500 chars) into paragraph chunks (sentence
+groups for oversized paragraphs), rewrites each separately, and reassembles.
 Benchmarked on the M4: ~0.6 s per paragraph, ~1,000-word document in ~18 s
 with all paragraphs preserved.
 
@@ -238,8 +240,8 @@ On the hotkey, Stark captures the selection from the frontmost app with a
 synthetic ⌘C, streams the rewrite in the floating panel, then refocuses the
 app and pastes over the selection with a synthetic ⌘V. Your clipboard is
 saved and restored on both legs. Posting keystrokes requires Accessibility;
-the app is ad-hoc signed, so macOS drops that grant after every rebuild —
-re-toggle Stark in System Settings → Accessibility after `make_app.sh`.
+the app is ad-hoc signed, so macOS drops that grant after every rebuild.
+Re-toggle Stark in System Settings → Accessibility after `make_app.sh`.
 
 To use the faster 0.5B model, fuse `adapters-0.5b` the same way and point
 `model` at the fused `~/Stark/model/stark-0.5b`, then menu-bar → Restart
@@ -248,10 +250,10 @@ Server.
 ### App internals
 
 Pure AppKit/SwiftUI, no dependencies. Carbon `RegisterEventHotKey` for the
-global hotkey (the hotkey itself needs no Accessibility permission —
-only the ⌘C/⌘V posting for in-place mode does), `NSPanel` +
-`NSHostingView` for the picker, SSE streaming from the local server,
-`NSPasteboard` in/out. `LSUIElement` so there's no Dock icon.
+global hotkey (the hotkey itself needs no Accessibility permission; only the
+⌘C/⌘V posting for in-place mode does), `NSPanel` + `NSHostingView` for the
+picker, SSE streaming from the local server, `NSPasteboard` in/out.
+`LSUIElement` so there's no Dock icon.
 
 ### Credits
 

@@ -1,6 +1,6 @@
 # Roadmap ⚡
 
-Where Stark is going. No dates — it ships when it works. Have an opinion?
+Where Stark is going. No dates; it ships when it works. Have an opinion?
 [Open an issue](https://github.com/YoursSarcastically/stark/issues).
 
 ## Shipped
@@ -15,8 +15,8 @@ Where Stark is going. No dates — it ships when it works. Have an opinion?
 
 ## Next
 
-- **Signed releases.** A Developer ID–signed, notarized `.app` on GitHub
-  Releases — install without building, and the Accessibility grant survives
+- **Signed releases.** A Developer ID signed, notarized `.app` on GitHub
+  Releases: install without building, and the Accessibility grant survives
   updates (ad-hoc builds lose it on every rebuild).
 - **Custom styles.** Record your own tag plus a handful of example pairs,
   retrain locally in minutes, get a ninth style that's entirely yours.
@@ -28,10 +28,11 @@ Where Stark is going. No dates — it ships when it works. Have an opinion?
 ## Later
 
 - **Low-power mode.** One toggle to swap to the 0.5B model when on battery.
-- **Translate & summarize styles** — same one-word-tag interface.
+  Same bolt, smaller arc reactor.
+- **Translate & summarize styles**, with the same one-word-tag interface.
 - **Rewrite history.** Opt-in, on-disk log of originals so any rewrite can be
   recovered days later, not just the last one.
-- **CLI.** `stark polish < draft.txt` — the same local server, scriptable.
+- **CLI.** `stark polish < draft.txt`: the same local server, scriptable.
 - **Multilingual.** The base model speaks more languages than the fine-tune
   currently allows; teach the styles to follow.
 
