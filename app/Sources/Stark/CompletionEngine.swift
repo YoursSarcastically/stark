@@ -37,6 +37,7 @@ final class CompletionEngine {
     /// describe what they were typing.
     private var expiryTimer: Timer?
     private let suggestionLifetime: TimeInterval = 2
+    private let streamingBackstop: TimeInterval = 12
     /// Deliberate pointer input — a click, a scroll, a pinch — means attention
     /// has left the keyboard, so the suggestion is stale.
     private var mouseMonitor: Any?
@@ -58,7 +59,6 @@ final class CompletionEngine {
     /// about text typed before Stark started watching, or pasted in); otherwise
     /// this wins.
     private var typed = ""
-    private var typedApp: pid_t = 0
     /// Last length AX reported for the focused field, used to spot the field
     /// being emptied (message sent, document cleared) without trusting AX's
     /// absolute values, which several apps get wrong.
@@ -75,11 +75,6 @@ final class CompletionEngine {
     /// does.
     private let minPrefix = 3
     private let maxPrefix = 480
-
-    private let kVKTab: Int64 = 48
-    private let kVKEscape: Int64 = 53
-    private let kVKDelete: Int64 = 51
-    private let kVKForwardDelete: Int64 = 117
 
     init(client: StarkClient) {
         self.client = client
@@ -102,7 +97,7 @@ final class CompletionEngine {
             switch which {
             case .accept:
                 completionLog.info("tab accept: \(self.suggestion, privacy: .public)")
-                self.acceptNextWord()
+                self.acceptAll()
             case .dismiss: self.clearSuggestion()
             case .none: break
             }
@@ -118,7 +113,6 @@ final class CompletionEngine {
                     let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                         as? NSRunningApplication
                     completionLog.debug("focus -> \(app?.bundleIdentifier ?? "?", privacy: .public), buffer cleared")
-                    self.typedApp = app?.processIdentifier ?? 0
                     self.typed = ""
                     self.clearSuggestion()
                     // Electron/Chromium expose nothing until asked; do it once
@@ -326,8 +320,12 @@ final class CompletionEngine {
         let text = Self.clean(raw, prefix: prefix)
         // While streaming, an empty cleaned string just means the first token
         // was the overlap being stripped — keep the card up rather than
-        // flickering it away.
-        guard !text.isEmpty || streaming else { return }
+        // flickering it away. Once finished, empty means there is nothing to
+        // offer, so the placeholder must come down.
+        guard !text.isEmpty || streaming else {
+            clearSuggestion()
+            return
+        }
         suggestion = text
         suggestedFor = prefix
         // Tab may only be swallowed once there is something to accept.
@@ -336,13 +334,15 @@ final class CompletionEngine {
         // model has actually finished — expiring mid-stream would kill a
         // suggestion the user never got to see.
         expiryTimer?.invalidate()
-        if !streaming {
-            expiryTimer = Timer.scheduledTimer(withTimeInterval: suggestionLifetime,
-                                               repeats: false) { _ in
-                Task { @MainActor [weak self] in
-                    completionLog.debug("dismissed: suggestion expired")
-                    self?.clearSuggestion()
-                }
+        // A finished suggestion gets the short lifetime; one still streaming
+        // gets a long backstop, because a stream that errors or stalls would
+        // otherwise leave the card on screen forever.
+        let lifetime = streaming ? streamingBackstop : suggestionLifetime
+        expiryTimer = Timer.scheduledTimer(withTimeInterval: lifetime,
+                                           repeats: false) { _ in
+            Task { @MainActor [weak self] in
+                completionLog.debug("dismissed: suggestion expired")
+                self?.clearSuggestion()
             }
         }
 
@@ -397,32 +397,19 @@ final class CompletionEngine {
 
     /// Insert the next word of the suggestion, keeping the rest on screen so a
     /// second Tab continues. This is what makes a half-right suggestion useful.
-    private func acceptNextWord() {
-        guard !suggestion.isEmpty else { return }
-        let s = suggestion
-        // Take the leading space (if any) plus the next word.
-        var idx = s.startIndex
-        if s[idx] == " " { idx = s.index(after: idx) }
-        let afterWord = s[idx...].firstIndex(of: " ") ?? s.endIndex
-        let word = String(s[s.startIndex..<afterWord])
-        let rest = String(s[afterWord...])
-
-        TextTyper.insert(word)
-        suggestedFor += word
-        typed += word
-
-        if rest.trimmingCharacters(in: .whitespaces).isEmpty {
-            clearSuggestion()
-        } else {
-            suggestion = rest
-            // Re-anchor the ghost to the caret's new position.
-            if let element = AXBridge.focusedElement(),
-               let caret = AXBridge.caretRect(of: element) {
-                let font = AXBridge.caretOffset(of: element)
-                    .flatMap { AXBridge.fontAtCaret(of: element, caret: $0) }
-                overlay.showInline(rest, at: caret, font: font)
-            }
-        }
+    /// One Tab takes the whole suggestion. Word-by-word acceptance sounds
+    /// considerate but in practice means three or four Tabs for one sentence,
+    /// each with a clipboard round trip, and the card re-anchoring underneath
+    /// the user between them.
+    private func acceptAll() {
+        let text = suggestion
+        guard !text.isEmpty else { return }
+        // Clear FIRST: insertion is asynchronous, and leaving the tap armed
+        // means a second Tab lands on a suggestion that is already being typed.
+        clearSuggestion()
+        typed += text
+        suggestedFor = typed
+        TextTyper.insert(text)
     }
 
     private func clearSuggestion() {

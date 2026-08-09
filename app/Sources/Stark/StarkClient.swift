@@ -15,11 +15,11 @@ struct StarkClient {
     ///
     /// Deliberately not the rewrite path. Completion is latency-critical and
     /// runs while the user is still typing, so it caps output hard (a ghost
-    /// suggestion is a handful of words, never a paragraph), uses a short
+    /// suggestion is a handful of words, never a paragraph) and uses a short
     /// timeout — a late suggestion is worse than none, because the user has
-    /// moved on — and doesn't stream, since nothing is shown until the whole
-    /// suggestion is ready anyway.
-    /// Streaming completion: `onToken` fires on the main actor as each piece
+    /// already moved on.
+    ///
+    /// Streaming: `onToken` fires on the main actor as each piece
     /// arrives, so the suggestion can be shown word by word instead of after a
     /// dead half-second. The full text is still returned for the accept path.
     func completeStreaming(prefix: String,
@@ -60,36 +60,6 @@ struct StarkClient {
             await MainActor.run { onToken(snapshot) }
         }
         return out
-    }
-
-    func complete(prefix: String) async throws -> String {
-        var req = URLRequest(url: config.baseURL.appendingPathComponent("v1/chat/completions"))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.timeoutInterval = 6
-        let body: [String: Any] = [
-            "stream": false,
-            "temperature": 0.3,
-            "max_tokens": 24,
-            "repetition_penalty": 1.1,
-            "messages": [
-                ["role": "system", "content": "complete"],
-                ["role": "user", "content": prefix],
-            ],
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-            throw StarkError.server("completion HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
-        }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = obj["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw StarkError.server("completion response was not parseable")
-        }
-        return content
     }
 
     /// The fine-tune was trained on short pairs; past a few hundred words in

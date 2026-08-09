@@ -12,9 +12,10 @@ import AppKit
 ///
 /// Two presentations:
 ///
-///  - **inline** — dimmed ghost text at the caret in the field's own font.
-///  - **card** — the glass panel, for apps that won't report caret geometry
-///    (Google Docs, many Electron surfaces).
+/// One presentation: a glass card anchored below the text. Inline ghost text at
+/// the caret was tried and removed — it covers the sentence being written and
+/// jumps on every keystroke, and the apps that most need suggestions (Docs,
+/// Electron) are exactly the ones that won't report caret geometry anyway.
 @MainActor
 final class GhostOverlay {
 
@@ -82,6 +83,10 @@ final class GhostOverlay {
         p.backgroundColor = .clear
         p.isOpaque = false
         p.hasShadow = false          // the glass carries its own shading
+        // Slightly translucent overall so the card reads as glass rather than a
+        // solid chip. Kept above 0.9 — below that the label starts to lose
+        // contrast against busy backgrounds.
+        p.alphaValue = 0.93
         p.ignoresMouseEvents = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         p.hidesOnDeactivate = false
@@ -97,14 +102,14 @@ final class GhostOverlay {
         keycap.isEditable = false
         keycap.drawsBackground = false
         keycap.alignment = .center
-        keycap.font = .systemFont(ofSize: 10, weight: .medium)
+        keycap.font = Self.rounded(10, weight: .semibold)
         keycap.textColor = .secondaryLabelColor
         keycap.wantsLayer = true
         keycap.layer?.cornerRadius = 5
         keycap.layer?.cornerCurve = .continuous
         keycap.layer?.borderWidth = 1
-        keycap.layer?.borderColor = NSColor.separatorColor.cgColor
-        keycap.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05).cgColor
+        keycap.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
+        keycap.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
         keycap.translatesAutoresizingMaskIntoConstraints = false
 
         spinner.style = .spinning
@@ -203,25 +208,16 @@ final class GhostOverlay {
         panel = p
     }
 
-    // MARK: presentation
-
-    func showInline(_ text: String, at caret: CGRect, font: NSFont?) {
-        guard !text.isEmpty, let panel else { return }
-        cardMode = false
-        let f = font ?? NSFont.systemFont(ofSize: max(11, min(caret.height * 0.72, 24)))
-        label.font = f
-        label.stringValue = text
-        label.textColor = NSColor.secondaryLabelColor.withAlphaComponent(0.8)
-        keycap.isHidden = true
-
-        let width = min(label.intrinsicContentSize.width + hInset * 2, 560)
-        let h = max(caret.height, f.pointSize + 6)
-        place(CGRect(x: caret.maxX + 1, y: caret.minY, width: width, height: h), panel: panel)
+    /// SF Rounded at a given size, falling back to the default face if the
+    /// rounded design is unavailable.
+    static func rounded(_ size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        guard let descriptor = base.fontDescriptor.withDesign(.rounded) else { return base }
+        return NSFont(descriptor: descriptor, size: size) ?? base
     }
 
-    /// Show (or update) the card. Called repeatedly while the model streams —
-    /// the panel keeps its left edge fixed and only grows to the right, so the
-    /// text doesn't slide around under the reader as tokens land.
+    // MARK: presentation
+
     func showCard(_ text: String, caret: CGRect?, window: CGRect?, streaming: Bool = false) {
         guard let panel else { return }
         let isNew = !cardMode || !isVisible
@@ -231,9 +227,11 @@ final class GhostOverlay {
         // NSFont.systemFont at the standard small-control size: the same face
         // and metrics AppKit uses for menus and HUDs, rather than a bespoke
         // point size that reads as a web component.
-        // Medium weight and a touch of tracking: the card is read in a glance,
-        // out of the corner of the eye, over arbitrary content behind glass.
-        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        // SF Rounded: softer terminals than the default face, which is what
+        // reads as "modern" here without resorting to a third-party font.
+        // Medium weight because the card is read at a glance, out of the corner
+        // of the eye, over arbitrary content showing through glass.
+        label.font = Self.rounded(NSFont.systemFontSize, weight: .medium)
         label.textColor = .labelColor
         label.stringValue = text.isEmpty ? "…" : text
 
@@ -268,7 +266,7 @@ final class GhostOverlay {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.16
                 ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
-                panel.animator().alphaValue = 1
+                panel.animator().alphaValue = 0.93
             }
         } else {
             // Resize without animation: the frame changes on every streamed
