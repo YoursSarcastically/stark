@@ -292,6 +292,9 @@ final class CompletionEngine {
         guard enabled, let (prefix, element) = context() else { return }
         guard prefix != suggestedFor else { return }
 
+        let caret = element.flatMap { AXBridge.caretRect(of: $0) }
+        overlay.showThinking(caret: caret, window: AXBridge.focusedWindowFrame())
+
         pending = Task { [weak self] in
             guard let self else { return }
             do {
@@ -346,12 +349,11 @@ final class CompletionEngine {
             }
         }
 
+        // At the caret where the app reports it, so the pill grows out of the
+        // cursor. Apps that won't report caret geometry (Docs, much of Electron)
+        // fall back to a fixed position low in the window.
         let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        // Always the card, anchored below the text. Inline ghost text at the
-        // caret reads well in a mockup but in practice sits on top of the
-        // sentence and jumps on every keystroke.
-        overlay.showCard(text, caret: nil, window: AXBridge.focusedWindowFrame(),
-                         streaming: streaming)
+        overlay.showSuggestion(text, caret: caret, window: AXBridge.focusedWindowFrame())
     }
 
     /// Trims the model's habits: stop tokens, quotes, a repeat of the prefix's
