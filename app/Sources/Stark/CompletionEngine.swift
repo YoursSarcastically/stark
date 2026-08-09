@@ -275,12 +275,19 @@ final class CompletionEngine {
         pending = Task { [weak self] in
             guard let self else { return }
             do {
-                let text = try await self.client.complete(prefix: prefix)
+                // Stream it: the card appears with the first token instead of
+                // after the whole generation, which is most of the perceived
+                // latency on a machine where a request takes ~0.5s.
+                let text = try await self.client.completeStreaming(prefix: prefix) { partial in
+                    guard !Task.isCancelled else { return }
+                    // Only keep streaming into the card if the user hasn't moved on.
+                    guard let (now, el) = self.context(), now == prefix else { return }
+                    self.present(partial, prefix: prefix, element: el, streaming: true)
+                }
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    // The buffer may have moved on while we waited.
                     guard let (now, el) = self.context(), now == prefix else { return }
-                    self.present(text, prefix: prefix, element: el)
+                    self.present(text, prefix: prefix, element: el, streaming: false)
                 }
             } catch {
                 completionLog.debug("prediction failed: \(error.localizedDescription)")
@@ -288,24 +295,24 @@ final class CompletionEngine {
         }
     }
 
-    private func present(_ raw: String, prefix: String, element: AXUIElement?) {
+    private func present(_ raw: String, prefix: String, element: AXUIElement?,
+                         streaming: Bool = false) {
         let text = Self.clean(raw, prefix: prefix)
-        guard !text.isEmpty else { return }
+        // While streaming, an empty cleaned string just means the first token
+        // was the overlap being stripped — keep the card up rather than
+        // flickering it away.
+        guard !text.isEmpty || streaming else { return }
         suggestion = text
         suggestedFor = prefix
-        // Only now may the tap swallow Tab.
-        tap.setArmed(true)
+        // Tab may only be swallowed once there is something to accept.
+        tap.setArmed(!text.isEmpty)
 
         let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        if let element, let caret {
-            let font = AXBridge.caretOffset(of: element)
-                .flatMap { AXBridge.fontAtCaret(of: element, caret: $0) }
-            overlay.showInline(text, at: caret, font: font)
-        } else {
-            // No caret geometry — anchor the chip to the window instead of
-            // dropping the suggestion entirely.
-            overlay.showChip(text, caret: caret, window: AXBridge.focusedWindowFrame())
-        }
+        // Always the card, anchored below the text. Inline ghost text at the
+        // caret reads well in a mockup but in practice sits on top of the
+        // sentence and jumps on every keystroke.
+        overlay.showCard(text, caret: nil, window: AXBridge.focusedWindowFrame(),
+                         streaming: streaming)
     }
 
     /// Trims the model's habits: stop tokens, quotes, a repeat of the prefix's

@@ -19,6 +19,49 @@ struct StarkClient {
     /// timeout — a late suggestion is worse than none, because the user has
     /// moved on — and doesn't stream, since nothing is shown until the whole
     /// suggestion is ready anyway.
+    /// Streaming completion: `onToken` fires on the main actor as each piece
+    /// arrives, so the suggestion can be shown word by word instead of after a
+    /// dead half-second. The full text is still returned for the accept path.
+    func completeStreaming(prefix: String,
+                           onToken: @escaping @MainActor (String) -> Void) async throws -> String {
+        var req = URLRequest(url: config.baseURL.appendingPathComponent("v1/chat/completions"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 8
+        let body: [String: Any] = [
+            "stream": true,
+            "temperature": 0.3,
+            "max_tokens": 24,
+            "repetition_penalty": 1.1,
+            "messages": [
+                ["role": "system", "content": "complete"],
+                ["role": "user", "content": prefix],
+            ],
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+            throw StarkError.server("completion HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+        var out = ""
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data: ") else { continue }
+            let payload = String(line.dropFirst(6))
+            if payload == "[DONE]" { break }
+            guard let data = payload.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = obj["choices"] as? [[String: Any]],
+                  let delta = choices.first?["delta"] as? [String: Any],
+                  let piece = delta["content"] as? String, !piece.isEmpty else { continue }
+            out += piece
+            let snapshot = out
+            await MainActor.run { onToken(snapshot) }
+        }
+        return out
+    }
+
     func complete(prefix: String) async throws -> String {
         var req = URLRequest(url: config.baseURL.appendingPathComponent("v1/chat/completions"))
         req.httpMethod = "POST"

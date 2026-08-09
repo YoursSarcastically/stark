@@ -1,34 +1,74 @@
 import AppKit
-import QuartzCore
 
-/// The suggestion, drawn on top of whatever app the user is typing in.
+/// The suggestion, drawn over whatever app the user is typing in.
 ///
-/// Two presentations, chosen by how much the focused app is willing to tell us:
+/// Built on `NSGlassEffectView` — the system's own Liquid Glass — rather than a
+/// hand-made imitation. Earlier attempts stacked a blurred gradient behind a
+/// solid card to fake depth; that always reads as decoration sitting *on top of*
+/// the screen. Real glass refracts what is behind it, so the suggestion looks
+/// like part of the window it is floating over, at any size, on any background,
+/// in either appearance. There is no gradient, no glow, and no idle animation:
+/// the only thing that moves is the text arriving as the model produces it.
 ///
-///  - **inline** — dimmed ghost text sitting at the caret in the field's own
-///    font, so it reads as part of the sentence being written.
-///  - **chip** — a floating capsule anchored under the caret, or to the window
-///    when even that is unknown. Used for apps that won't report caret
-///    geometry (Google Docs, many Electron surfaces).
+/// Two presentations:
 ///
-/// The chip is deliberately not a grey system tooltip: it carries a soft
-/// animated aurora border so it reads as a live model producing something,
-/// which is the whole feeling the feature is selling. It never takes focus and
-/// ignores mouse events.
+///  - **inline** — dimmed ghost text at the caret in the field's own font.
+///  - **card** — the glass panel, for apps that won't report caret geometry
+///    (Google Docs, many Electron surfaces).
 @MainActor
 final class GhostOverlay {
 
     private var panel: NSPanel?
+    /// Real Liquid Glass on macOS 26+, vibrancy everywhere else. Held as a bare
+    /// NSView so the deployment target stays at macOS 14 — Stark still runs on
+    /// Macs that never got Liquid Glass, they just get the older material.
+    private let backdrop: NSView
+    private let content = NSView()
     private let label = NSTextField(labelWithString: "")
-    private let key = NSTextField(labelWithString: "tab")
-    private let backdrop = NSVisualEffectView()
-    private let glow = CAGradientLayer()
-    private let border = CAShapeLayer()
-    private var chipMode = false
+    private let keycap = NSTextField(labelWithString: "tab")
+    /// Shown in the keycap's place until the model has finished, so the card
+    /// reads as "working" rather than as a finished suggestion that happens to
+    /// be short.
+    private let spinner = NSProgressIndicator()
+    /// The border highlight. `rimHost` is fixed and carries the rounded-rect
+    /// stroke as its mask; `rim` is a square conic gradient spinning inside it.
+    /// The mask has to live on a separate, stationary layer — put it on the
+    /// gradient itself and it rotates too, and nothing appears to move.
+    private let rimHost = CALayer()
+    private let rim = CAGradientLayer()
+    private let rimMask = CAShapeLayer()
 
     private(set) var isVisible = false
+    private var cardMode = false
+    private var anchor: CGPoint = .zero
+    private var anchorCentreX: CGFloat = 0
+    private var centred = false
+
+    private let height: CGFloat = 36
+    private let hInset: CGFloat = 14
 
     init() {
+        if #available(macOS 26.0, *) {
+            let g = NSGlassEffectView()
+            g.cornerRadius = 10
+            // `.clear` is the genuinely transparent glass; `.regular` frosts
+            // heavily and, over a white page, resolves to the flat grey slab
+            // this component kept looking like.
+            g.style = .clear
+            g.tintColor = nil
+            backdrop = g
+        } else {
+            let v = NSVisualEffectView()
+            v.material = .hudWindow
+            v.blendingMode = .behindWindow
+            v.state = .active
+            v.wantsLayer = true
+            v.layer?.cornerRadius = 10
+            v.layer?.cornerCurve = .continuous
+            v.layer?.masksToBounds = true
+            backdrop = v
+        }
+
         let p = NSPanel(contentRect: .zero,
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: true)
@@ -36,32 +76,10 @@ final class GhostOverlay {
         p.level = .statusBar
         p.backgroundColor = .clear
         p.isOpaque = false
-        p.hasShadow = false
+        p.hasShadow = false          // the glass carries its own shading
         p.ignoresMouseEvents = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         p.hidesOnDeactivate = false
-
-        let container = NSView()
-        container.wantsLayer = true
-
-        backdrop.material = .hudWindow
-        backdrop.blendingMode = .behindWindow
-        backdrop.state = .active
-        backdrop.wantsLayer = true
-        backdrop.layer?.cornerRadius = 11
-        backdrop.layer?.masksToBounds = true
-        backdrop.translatesAutoresizingMaskIntoConstraints = false
-
-        // The aurora: a wide multi-stop gradient that sweeps horizontally,
-        // masked to the rounded rect's stroke so only the border lights up.
-        glow.colors = Self.auroraColors
-        glow.startPoint = CGPoint(x: 0, y: 0.5)
-        glow.endPoint = CGPoint(x: 1, y: 0.5)
-        glow.locations = [0, 0.25, 0.5, 0.75, 1]
-        border.fillColor = nil
-        border.strokeColor = NSColor.white.cgColor
-        border.lineWidth = 1.6
-        glow.mask = border
 
         label.isBezeled = false
         label.isEditable = false
@@ -70,130 +88,207 @@ final class GhostOverlay {
         label.maximumNumberOfLines = 1
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        key.isBezeled = false
-        key.isEditable = false
-        key.drawsBackground = false
-        key.font = .systemFont(ofSize: 9, weight: .semibold)
-        key.textColor = .tertiaryLabelColor
-        key.translatesAutoresizingMaskIntoConstraints = false
-        key.wantsLayer = true
-        key.layer?.cornerRadius = 3
+        keycap.isBezeled = false
+        keycap.isEditable = false
+        keycap.drawsBackground = false
+        keycap.alignment = .center
+        keycap.font = .systemFont(ofSize: 9, weight: .semibold)
+        keycap.textColor = .secondaryLabelColor
+        keycap.wantsLayer = true
+        keycap.layer?.cornerRadius = 4
+        keycap.layer?.cornerCurve = .continuous
+        keycap.layer?.borderWidth = 1
+        keycap.layer?.borderColor = NSColor.separatorColor.cgColor
+        keycap.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05).cgColor
+        keycap.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addSubview(backdrop)
-        container.addSubview(label)
-        container.addSubview(key)
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+
+        // A single bright arc travelling around the border, over a dim base, so
+        // the card reads as lit rather than outlined. Kept close to white with a
+        // faint cool cast — a saturated rainbow here looks like a gaming laptop.
+        rim.type = .conic
+        rim.colors = [
+            NSColor.white.withAlphaComponent(0.06).cgColor,
+            NSColor.white.withAlphaComponent(0.10).cgColor,
+            NSColor.white.withAlphaComponent(0.70).cgColor,
+            NSColor(calibratedRed: 0.72, green: 0.82, blue: 1.0, alpha: 0.55).cgColor,
+            NSColor.white.withAlphaComponent(0.10).cgColor,
+            NSColor.white.withAlphaComponent(0.06).cgColor,
+        ]
+        rim.locations = [0, 0.30, 0.44, 0.52, 0.66, 1]
+        rim.startPoint = CGPoint(x: 0.5, y: 0.5)
+        rim.endPoint = CGPoint(x: 1, y: 0.5)
+
+        rimMask.fillColor = nil
+        rimMask.strokeColor = NSColor.white.cgColor
+        rimMask.lineWidth = 1.2
+        rimHost.mask = rimMask
+        rimHost.addSublayer(rim)
+
+        content.addSubview(label)
+        content.addSubview(keycap)
+        content.addSubview(spinner)
         NSLayoutConstraint.activate([
-            backdrop.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            backdrop.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            backdrop.topAnchor.constraint(equalTo: container.topAnchor),
-            backdrop.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            key.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
-            key.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-        ])
-        container.layer?.addSublayer(glow)
-        p.contentView = container
-        panel = p
-    }
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: hInset),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            keycap.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 9),
+            keycap.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -hInset),
+            keycap.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            keycap.widthAnchor.constraint(equalToConstant: 24),
+            keycap.heightAnchor.constraint(equalToConstant: 14),
 
-    /// Warm gold through violet to cyan and back — wide enough that the sweep
-    /// always has several hues on screen, and looped so there is no visible seam.
-    private static var auroraColors: [CGColor] {
-        [NSColor(calibratedRed: 1.00, green: 0.78, blue: 0.25, alpha: 1),
-         NSColor(calibratedRed: 0.98, green: 0.42, blue: 0.55, alpha: 1),
-         NSColor(calibratedRed: 0.55, green: 0.40, blue: 0.98, alpha: 1),
-         NSColor(calibratedRed: 0.25, green: 0.80, blue: 0.95, alpha: 1),
-         NSColor(calibratedRed: 1.00, green: 0.78, blue: 0.25, alpha: 1)].map(\.cgColor)
+            spinner.centerXAnchor.constraint(equalTo: keycap.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: keycap.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 12),
+            spinner.heightAnchor.constraint(equalToConstant: 12),
+        ])
+
+        if #available(macOS 26.0, *), let g = backdrop as? NSGlassEffectView {
+            g.contentView = content
+        } else {
+            content.translatesAutoresizingMaskIntoConstraints = false
+            backdrop.addSubview(content)
+            NSLayoutConstraint.activate([
+                content.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
+                content.topAnchor.constraint(equalTo: backdrop.topAnchor),
+                content.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor),
+            ])
+        }
+        // The rim must live ABOVE the glass, in a plain container. The header
+        // for NSGlassEffectView is explicit that arbitrary subviews/sublayers
+        // get no z-order guarantee relative to the glass, so a rim added to the
+        // glass view itself may simply never be drawn.
+        let root = NSView()
+        root.wantsLayer = true
+        root.layer?.masksToBounds = false
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            backdrop.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: root.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+        root.layer?.addSublayer(rimHost)
+        p.contentView = root
+        panel = p
     }
 
     // MARK: presentation
 
     func showInline(_ text: String, at caret: CGRect, font: NSFont?) {
         guard !text.isEmpty, let panel else { return }
-        chipMode = false
+        cardMode = false
         let f = font ?? NSFont.systemFont(ofSize: max(11, min(caret.height * 0.72, 24)))
         label.font = f
         label.stringValue = text
         label.textColor = NSColor.secondaryLabelColor.withAlphaComponent(0.8)
-        key.isHidden = true
-        backdrop.isHidden = true
-        glow.isHidden = true
+        keycap.isHidden = true
 
-        let width = min(label.intrinsicContentSize.width + 24, 560)
-        let height = max(caret.height, f.pointSize + 6)
-        present(frame: CGRect(x: caret.maxX + 1, y: caret.minY, width: width, height: height),
-                panel: panel)
+        let width = min(label.intrinsicContentSize.width + hInset * 2, 560)
+        let h = max(caret.height, f.pointSize + 6)
+        place(CGRect(x: caret.maxX + 1, y: caret.minY, width: width, height: h), panel: panel)
     }
 
-    /// Anchored just under the caret when we know it, otherwise near the top of
-    /// the focused window — never pinned to the bottom of the screen, which is
-    /// where a suggestion is least likely to be looked at.
-    func showChip(_ text: String, caret: CGRect?, window: CGRect?) {
-        guard !text.isEmpty, let panel else { return }
-        chipMode = true
-        label.font = .systemFont(ofSize: 12.5, weight: .regular)
-        label.stringValue = text
+    /// Show (or update) the card. Called repeatedly while the model streams —
+    /// the panel keeps its left edge fixed and only grows to the right, so the
+    /// text doesn't slide around under the reader as tokens land.
+    func showCard(_ text: String, caret: CGRect?, window: CGRect?, streaming: Bool = false) {
+        guard let panel else { return }
+        let isNew = !cardMode || !isVisible
+        cardMode = true
+        keycap.isHidden = streaming
+        if streaming { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        // NSFont.systemFont at the standard small-control size: the same face
+        // and metrics AppKit uses for menus and HUDs, rather than a bespoke
+        // point size that reads as a web component.
+        label.font = .systemFont(ofSize: NSFont.systemFontSize)
         label.textColor = .labelColor
-        key.isHidden = false
-        backdrop.isHidden = false
-        glow.isHidden = false
+        label.stringValue = text.isEmpty ? "…" : text
 
-        let width = min(label.intrinsicContentSize.width + 12 + 8 + key.intrinsicContentSize.width + 12, 520)
-        let height: CGFloat = 30
-        let origin: CGPoint
-        if let caret {
-            origin = CGPoint(x: caret.minX, y: caret.minY - height - 6)
-        } else if let window {
-            origin = CGPoint(x: window.midX - width / 2, y: window.maxY - height - 56)
-        } else {
-            return
+        let width = min(max(hInset + label.intrinsicContentSize.width + 9 + 24 + hInset, 120), 480)
+        if isNew {
+            // Deliberately ignores the caret. Anchoring beside it puts the card
+            // on top of the sentence being written and makes it jump with every
+            // keystroke; a fixed position below the text is calmer to read and
+            // never occludes what you just typed.
+            if let window {
+                anchorCentreX = window.midX
+                anchor = CGPoint(x: window.midX - width / 2,
+                                 y: window.minY + max(72, window.height * 0.13))
+                centred = true
+            } else {
+                return
+            }
+        } else if centred {
+            // Keep it centred as it grows during streaming, rather than letting
+            // it creep rightwards off its anchor.
+            anchor.x = anchorCentreX - width / 2
         }
-        present(frame: CGRect(origin: origin, size: CGSize(width: width, height: height)),
-                panel: panel)
+        place(CGRect(origin: anchor, size: CGSize(width: width, height: height)), panel: panel)
     }
 
-    private func present(frame: CGRect, panel: NSPanel) {
-        panel.setFrame(clamped(frame), display: true)
-        if chipMode { layoutGlow(size: panel.frame.size) }
+    private func place(_ frame: CGRect, panel: NSPanel) {
+        let target = clamped(frame)
         if !isVisible {
+            panel.setFrame(target, display: false)
             panel.alphaValue = 0
             panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.14
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                ctx.duration = 0.16
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
                 panel.animator().alphaValue = 1
             }
         } else {
+            // Resize without animation: the frame changes on every streamed
+            // token, and animating that would make the card wobble.
+            panel.setFrame(target, display: true)
             panel.orderFrontRegardless()
         }
+        layoutRim(size: target.size)
         isVisible = true
     }
 
-    private func layoutGlow(size: CGSize) {
-        // The gradient is three times the chip's width so the sweep always has
-        // colour to bring in from off-screen.
-        glow.frame = CGRect(x: -size.width, y: 0, width: size.width * 3, height: size.height)
-        let path = CGPath(roundedRect: CGRect(x: size.width + 0.8, y: 0.8,
-                                              width: size.width - 1.6, height: size.height - 1.6),
-                          cornerWidth: 10.2, cornerHeight: 10.2, transform: nil)
-        border.path = path
-        border.frame = glow.bounds
+    private func layoutRim(size: CGSize) {
+        guard cardMode else { rimHost.isHidden = true; return }
+        rimHost.isHidden = false
 
-        guard glow.animation(forKey: "aurora") == nil else { return }
-        let sweep = CABasicAnimation(keyPath: "position.x")
-        sweep.byValue = size.width
-        sweep.duration = 2.6
-        sweep.repeatCount = .infinity
-        sweep.timingFunction = CAMediaTimingFunction(name: .linear)
-        glow.add(sweep, forKey: "aurora")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)   // no implicit animation on resize
+        rimHost.frame = CGRect(origin: .zero, size: size)
+        rimMask.frame = rimHost.bounds
+        rimMask.path = CGPath(roundedRect: CGRect(x: 0.6, y: 0.6,
+                                                  width: size.width - 1.2,
+                                                  height: size.height - 1.2),
+                              cornerWidth: 9.4, cornerHeight: 9.4, transform: nil)
+        // Square and large enough that the spinning gradient still covers the
+        // corners; a conic gradient in a wide rect would sweep past the ends.
+        let side = (size.width * size.width + size.height * size.height).squareRoot()
+        rim.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        rim.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        CATransaction.commit()
+
+        guard rim.animation(forKey: "circle") == nil else { return }
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0
+        spin.toValue = 2 * Double.pi
+        spin.duration = 4.5
+        spin.repeatCount = .infinity
+        spin.isRemovedOnCompletion = false
+        rim.add(spin, forKey: "circle")
     }
 
     func hide() {
         guard isVisible, let panel else { return }
         isVisible = false
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.1
+            ctx.duration = 0.12
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self, !self.isVisible else { return }
@@ -205,10 +300,10 @@ final class GhostOverlay {
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return frame }
         var f = frame
-        if f.maxX > visible.maxX { f.origin.x = visible.maxX - f.width }
-        if f.minX < visible.minX { f.origin.x = visible.minX }
-        if f.minY < visible.minY { f.origin.y = visible.minY }
-        if f.maxY > visible.maxY { f.origin.y = visible.maxY - f.height }
+        if f.maxX > visible.maxX { f.origin.x = visible.maxX - f.width - 8 }
+        if f.minX < visible.minX { f.origin.x = visible.minX + 8 }
+        if f.minY < visible.minY { f.origin.y = visible.minY + 8 }
+        if f.maxY > visible.maxY { f.origin.y = visible.maxY - f.height - 8 }
         return f
     }
 }
