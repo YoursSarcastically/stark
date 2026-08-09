@@ -32,6 +32,18 @@ final class CompletionEngine {
     private var suggestedFor = ""
     private var pending: Task<Void, Never>?
     private var debounceTimer: Timer?
+    /// A suggestion that outlives the moment it was made is clutter: the user
+    /// has moved on, but a card is still sitting over their screen claiming to
+    /// describe what they were typing.
+    private var expiryTimer: Timer?
+    private let suggestionLifetime: TimeInterval = 7
+    /// Pointer activity means attention has left the keyboard, so the suggestion
+    /// is stale by definition. Clicks and scrolls dismiss immediately; movement
+    /// has to clear a threshold first, or the tiniest trackpad drift would kill
+    /// every suggestion before it could be read.
+    private var mouseMonitor: Any?
+    private var mouseAnchor: NSPoint?
+    private let mouseSlop: CGFloat = 14
 
     private var enabled = false
     var isEnabled: Bool { enabled }
@@ -120,6 +132,32 @@ final class CompletionEngine {
                     }
                 }
             }
+        // Listen-only, on the main thread: a global NSEvent monitor never sits in
+        // front of the event like the keyboard tap does, so watching every mouse
+        // move here costs nothing the user can feel.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+                       .scrollWheel, .magnify, .swipe, .leftMouseDragged]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, self.overlay.isVisible else { return }
+                switch event.type {
+                case .mouseMoved, .leftMouseDragged:
+                    guard let from = self.mouseAnchor else {
+                        self.mouseAnchor = NSEvent.mouseLocation
+                        return
+                    }
+                    let now = NSEvent.mouseLocation
+                    if hypot(now.x - from.x, now.y - from.y) > self.mouseSlop {
+                        completionLog.debug("dismissed: pointer moved")
+                        self.clearSuggestion()
+                    }
+                default:
+                    completionLog.debug("dismissed: pointer input")
+                    self.clearSuggestion()
+                }
+            }
+        }
+
         guard tap.start() else {
             completionLog.error("completion tap failed to start")
             return false
@@ -131,6 +169,8 @@ final class CompletionEngine {
 
     func stop() {
         tap.stop()
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
         cancelPending()
         clearSuggestion()
         enabled = false
@@ -306,6 +346,20 @@ final class CompletionEngine {
         suggestedFor = prefix
         // Tab may only be swallowed once there is something to accept.
         tap.setArmed(!text.isEmpty)
+        // Anchor the pointer where it is now, and start the clock once the
+        // model has actually finished — expiring mid-stream would kill a
+        // suggestion the user never got to see.
+        mouseAnchor = NSEvent.mouseLocation
+        expiryTimer?.invalidate()
+        if !streaming {
+            expiryTimer = Timer.scheduledTimer(withTimeInterval: suggestionLifetime,
+                                               repeats: false) { _ in
+                Task { @MainActor [weak self] in
+                    completionLog.debug("dismissed: suggestion expired")
+                    self?.clearSuggestion()
+                }
+            }
+        }
 
         let caret = element.flatMap { AXBridge.caretRect(of: $0) }
         // Always the card, anchored below the text. Inline ghost text at the
@@ -389,6 +443,9 @@ final class CompletionEngine {
     private func clearSuggestion() {
         suggestion = ""
         suggestedFor = ""
+        expiryTimer?.invalidate()
+        expiryTimer = nil
+        mouseAnchor = nil
         overlay.hide()
         tap.setArmed(false)
     }
