@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// The rewrite panel.
+///
+/// Reads as a live agent working on your text rather than a settings sheet:
+/// the source text is a quiet quoted block, the result streams into a card that
+/// glows while it's thinking, and the styles are a compact grid you can hit by
+/// number. Everything is system-material and accent-tinted so it inherits the
+/// user's appearance instead of imposing a look.
 struct PolishView: View {
     @ObservedObject var vm: PolishVM
     @ObservedObject var server: ServerManager
@@ -7,132 +14,267 @@ struct PolishView: View {
     var onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             header
-            clipboardPreview
-            Divider()
+            Divider().opacity(0.6)
+            source
             content
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            footer
         }
-        .padding(16)
-        .frame(width: 460, height: 440, alignment: .top)
+        .frame(width: 470, height: 450, alignment: .top)
+        .background(.ultraThinMaterial)
     }
 
+    // MARK: header
+
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bolt.circle.fill").foregroundStyle(.yellow)
-            Text("Stark").font(.headline)
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(LinearGradient(colors: [Color.accentColor,
+                                                  Color.accentColor.opacity(0.7)],
+                                         startPoint: .topLeading,
+                                         endPoint: .bottomTrailing))
+                    .frame(width: 22, height: 22)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            Text("Stark").font(.system(size: 13, weight: .semibold))
             Spacer()
-            Circle().fill(statusColor).frame(width: 8, height: 8)
-            Text(server.status.label).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 5) {
+                Circle().fill(statusColor).frame(width: 6, height: 6)
+                Text(server.status.label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     private var statusColor: Color {
         switch server.status {
         case .running: return .green
         case .starting: return .orange
+        case .sleeping: return .secondary
         case .stopped, .failed: return .red
         }
     }
 
-    private var clipboardPreview: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(vm.inPlace ? "SELECTION" : "CLIPBOARD").font(.caption2).foregroundStyle(.tertiary)
-            Text(vm.input.isEmpty ? "—" : vm.input)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
+    // MARK: source text
+
+    private var source: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Capsule()
+                .fill(Color.accentColor.opacity(0.45))
+                .frame(width: 2.5)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(vm.inPlace ? "Selection" : "Clipboard")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .textCase(.uppercase)
+                    .kerning(0.4)
+                Text(vm.input.isEmpty ? "—" : vm.input)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
     }
+
+    // MARK: body
 
     @ViewBuilder
     private var content: some View {
         switch vm.state {
         case .empty:
-            VStack(spacing: 8) {
-                Image(systemName: "doc.on.clipboard").font(.title2).foregroundStyle(.tertiary)
-                Text("Nothing to rewrite. Select or copy some text, then press \(hotkeyDisplay).")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            centred(icon: "text.cursor",
+                    title: "Nothing to rewrite",
+                    detail: "Select some text anywhere, then press \(hotkeyDisplay).")
 
         case .pickPreset:
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 10) {
                 if vm.suggestOrganize {
-                    Label("Looks like a list — press B to organize", systemImage: "list.bullet")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-                        .padding(.bottom, 4)
+                    Label("Looks like a list — press 6 for bullets", systemImage: "list.bullet")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
                 }
-                ForEach(Presets.all, id: \.key) { preset in
-                    presetRow(preset)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                                    GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                    ForEach(Presets.all, id: \.key) { preset in
+                        presetCard(preset)
+                    }
                 }
-                Text("Press 1–7 or click · Esc to close")
-                    .font(.caption).foregroundStyle(.tertiary)
-                    .padding(.top, 6)
             }
+            .padding(.horizontal, 16)
 
         case .generating, .done:
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    if let p = vm.activePreset {
-                        Image(systemName: p.icon).font(.caption)
-                        Text(p.name).font(.caption.weight(.semibold))
-                    }
-                    Spacer()
-                    if vm.state == .generating {
-                        ProgressView().controlSize(.small)
-                    }
-                }
-                ScrollView {
-                    Text(vm.output.isEmpty ? " " : vm.output)
-                        .font(.callout)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: .infinity)
-                if vm.state == .done {
-                    HStack {
-                        Label(vm.inPlace ? "Replacing selection…" : "Copied to clipboard",
-                              systemImage: "checkmark.circle.fill")
-                            .font(.caption).foregroundStyle(.green)
-                        Spacer()
-                        Text("1–7 to try another style · Esc to close")
-                            .font(.caption).foregroundStyle(.tertiary)
-                    }
-                }
-            }
+            resultCard
 
         case .error(let msg):
-            VStack(alignment: .leading, spacing: 8) {
-                Label(msg, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.orange)
-                Text("Check that the model server is running (menu bar → Restart Server), then press \(hotkeyDisplay) again.")
-                    .font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                Label {
+                    Text(msg).font(.system(size: 12))
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                Text("Press \(hotkeyDisplay) to try again, or pick another style below.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 16)
         }
     }
 
-    private func presetRow(_ preset: Preset) -> some View {
+    /// The streamed rewrite. While generating, the border breathes in the accent
+    /// colour so the panel reads as actively working rather than frozen.
+    private var resultCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                if let p = vm.activePreset {
+                    Image(systemName: p.icon)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text(p.name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Spacer()
+                if vm.state == .generating {
+                    ThinkingDots()
+                } else {
+                    Label("Done", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.green)
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            ScrollView {
+                Text(vm.output.isEmpty ? " " : vm.output)
+                    .font(.system(size: 13))
+                    .lineSpacing(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.35),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(vm.state == .generating
+                        ? Color.accentColor.opacity(0.55)
+                        : Color.secondary.opacity(0.18),
+                        lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+    }
+
+    private func centred(icon: String, title: String, detail: String) -> some View {
+        VStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 22))
+                .foregroundStyle(.tertiary)
+            Text(title).font(.system(size: 13, weight: .medium))
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 30)
+    }
+
+    private func presetCard(_ preset: Preset) -> some View {
         Button {
             vm.run(preset)
         } label: {
-            HStack(spacing: 10) {
-                Text(preset.key)
-                    .font(.caption.monospaced().weight(.semibold))
-                    .frame(width: 18, height: 18)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            HStack(spacing: 8) {
                 Image(systemName: preset.icon)
-                    .frame(width: 18)
-                    .foregroundStyle(.secondary)
-                Text(preset.name).font(.callout)
-                Spacer()
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 16)
+                Text(preset.name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                Text(preset.key)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 15, height: 15)
+                    .background(.quaternary.opacity(0.5),
+                                in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
-            .padding(.vertical, 5)
-            .padding(.horizontal, 6)
+            .background(.quaternary.opacity(0.28),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: footer
+
+    private var footer: some View {
+        HStack(spacing: 4) {
+            switch vm.state {
+            case .pickPreset, .empty:
+                hint("1–8", "style")
+            case .generating:
+                Text("Running on this Mac").font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            case .done:
+                hint("1–8", "another style")
+            case .error:
+                hint("1–8", "retry")
+            }
+            Spacer()
+            hint("esc", "close")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.quaternary.opacity(0.18))
+        .overlay(Divider(), alignment: .top)
+    }
+
+    private func hint(_ key: String, _ label: String) -> some View {
+        HStack(spacing: 4) {
+            Text(key)
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(.quaternary.opacity(0.55),
+                            in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+            Text(label).font(.system(size: 10)).foregroundStyle(.tertiary)
+        }
+    }
+}
+
+/// Three dots pulsing in sequence — reads as the model thinking, and costs
+/// nothing next to a spinner that implies a determinate wait.
+private struct ThinkingDots: View {
+    final class Phase: ObservableObject { @Published var on = false }
+    @StateObject private var phase = Phase()
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 4, height: 4)
+                    .opacity(phase.on ? 1 : 0.25)
+                    .animation(.easeInOut(duration: 0.55).repeatForever()
+                        .delay(Double(i) * 0.16), value: phase.on)
+            }
+        }
+        .onAppear { phase.on = true }
     }
 }

@@ -10,3 +10,9 @@ model/stark-*/
 
 # Generated dataset (make_stark_data.py is seeded — regenerating is identical)
 model/data/
+
+# Generated datasets (all generators are seeded — regenerating is identical)
+model/data-complete/
+model/data-hardening/
+model/data-rewrite/
+model/data-unified/

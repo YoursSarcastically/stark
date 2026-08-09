@@ -82,6 +82,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     private func captureAndShow(preset: Preset?, forcePicker: Bool) async {
+        vm.server.noteUsed() // wake it if it dozed off, and reset the idle clock
         pasteTarget = nil
         var selection: String?
         var target: NSRunningApplication?

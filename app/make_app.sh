@@ -35,5 +35,15 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-codesign --force -s - "$APP"
+# Prefer a stable self-signed identity (./setup_signing.sh) so macOS keeps the
+# Accessibility grant across rebuilds; fall back to ad-hoc, which loses it every time.
+IDENTITY="Stark Dev"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+  codesign --force -s "$IDENTITY" "$APP"
+  echo "Signed with \"$IDENTITY\" — Accessibility grant persists across rebuilds."
+else
+  codesign --force -s - "$APP"
+  echo "Ad-hoc signed. Run ./setup_signing.sh once to stop losing the"
+  echo "Accessibility permission on every rebuild."
+fi
 echo "Built $APP — launch with: open $APP"
