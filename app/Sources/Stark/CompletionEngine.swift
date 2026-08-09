@@ -303,7 +303,8 @@ final class CompletionEngine {
         guard enabled, !suppressed, let (prefix, element) = context() else { return }
         guard prefix != suggestedFor else { return }
 
-        overlay.showThinking(anchor: Self.anchor(for: element))
+        overlay.showThinking(caret: element.flatMap { AXBridge.caretRect(of: $0) },
+                             field: element.flatMap { AXBridge.elementFrame(of: $0) })
 
         pending = Task { [weak self] in
             guard let self else { return }
@@ -362,7 +363,9 @@ final class CompletionEngine {
         // At the caret where the app reports it, so the pill grows out of the
         // cursor. Apps that won't report caret geometry (Docs, much of Electron)
         // fall back to a fixed position low in the window.
-        overlay.showSuggestion(text, anchor: Self.anchor(for: element))
+        overlay.showSuggestion(text,
+                               caret: element.flatMap { AXBridge.caretRect(of: $0) },
+                               field: element.flatMap { AXBridge.elementFrame(of: $0) })
     }
 
     /// A fixed position over the focused window rather than a caret- or
@@ -374,22 +377,6 @@ final class CompletionEngine {
     /// character while four had been typed. Anchoring to the field instead put
     /// the panel over the composer being typed into. A steady position over the
     /// document is somewhere the eye learns once and can then ignore.
-    static func anchor(for element: AXUIElement?) -> CGRect? {
-        // Rule 1: the caret, via the accessibility API. A fixed position on the
-        // display is the single thing that makes the panel feel disconnected
-        // from what is being typed.
-        if let element, let caret = AXBridge.caretRect(of: element) { return caret }
-        // The field's own frame is reported far more widely than caret bounds.
-        // Anchor to its bottom-left so the capsule hangs beneath the input
-        // rather than covering it.
-        if let element, let field = AXBridge.elementFrame(of: element) {
-            return CGRect(x: field.minX + 8, y: field.minY, width: 1, height: 0)
-        }
-        guard let window = AXBridge.focusedWindowFrame() else { return nil }
-        return CGRect(x: window.midX, y: window.minY + max(150, window.height * 0.22),
-                      width: 0, height: 0)
-    }
-
     /// Trims the model's habits: stop tokens, quotes, a repeat of the prefix's
     /// last words, and anything past the first sentence.
     static func clean(_ raw: String, prefix: String) -> String {

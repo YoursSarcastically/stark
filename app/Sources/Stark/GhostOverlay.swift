@@ -145,22 +145,22 @@ final class GhostOverlay {
     // MARK: states
 
     /// Thinking — the same capsule collapsed to three dots. Never a spinner.
-    func showThinking(anchor: CGRect?) {
+    func showThinking(caret: CGRect?, field: CGRect?) {
         guard let panel else { return }
         thinking = true
         label.stringValue = ""
         badge.stringValue = ""
-        place(width: thinkingWidth, in: anchor, panel: panel)
+        place(width: thinkingWidth, caret: caret, field: field, panel: panel)
     }
 
-    func showSuggestion(_ text: String, anchor: CGRect?) {
+    func showSuggestion(_ text: String, caret: CGRect?, field: CGRect?) {
         guard !text.isEmpty, let panel else { return }
         thinking = false
         label.stringValue = text
         badge.stringValue = "TAB"
         let width = min(padLeft + label.intrinsicContentSize.width + gap
                         + badgeSize.width + padRight, maxWidth)
-        place(width: width, in: anchor, panel: panel)
+        place(width: width, caret: caret, field: field, panel: panel)
     }
 
     /// Accepting — a 60ms press-in with the key badge inverted, so the keypress
@@ -179,20 +179,42 @@ final class GhostOverlay {
 
     // MARK: placement
 
-    /// `anchor` is the caret's rect where the app reports one. The capsule sits
-    /// under the caret's bottom edge with a 6pt gap, left-aligned to it — not
-    /// centred, so it reads as hanging off the cursor rather than as a floating
-    /// object that happens to be nearby.
-    private func place(width: CGFloat, in anchor: CGRect?, panel: NSPanel) {
+    /// Places the capsule under the caret, then **proves** it isn't covering
+    /// anything the user is writing.
+    ///
+    /// Every previous version computed a position and trusted the arithmetic.
+    /// That is how the capsule ended up sitting on top of a half-typed sentence:
+    /// one bad caret rect from one app, and the panel lands squarely over the
+    /// text. Position is now a proposal, and the field rect is the referee — if
+    /// the proposed frame intersects the field at all, it is moved below the
+    /// field's bottom edge, and above its top edge if there is no room below.
+    /// A suggestion that hides what you are writing is worse than no suggestion.
+    private func place(width: CGFloat, caret: CGRect?, field: CGRect?, panel: NSPanel) {
         let size = CGSize(width: width, height: height)
-        let frame: CGRect
-        if let anchor {
-            let x = anchor.width > 0 ? anchor.minX : anchor.midX - width / 2
-            frame = CGRect(origin: CGPoint(x: x, y: anchor.minY - height - 6), size: size)
+        var frame: CGRect
+        if let caret {
+            frame = CGRect(origin: CGPoint(x: caret.minX, y: caret.minY - height - 6), size: size)
+        } else if let field {
+            frame = CGRect(origin: CGPoint(x: field.minX + 8, y: field.minY - height - 8),
+                           size: size)
         } else if isVisible {
             frame = CGRect(origin: panel.frame.origin, size: size)
         } else {
             return
+        }
+
+        if let field, frame.intersects(field.insetBy(dx: -2, dy: -2)) {
+            let visible = (NSScreen.screens.first { $0.frame.intersects(field) }
+                           ?? NSScreen.main)?.visibleFrame
+            let below = CGRect(x: frame.origin.x, y: field.minY - height - 8,
+                               width: width, height: height)
+            let above = CGRect(x: frame.origin.x, y: field.maxY + 8,
+                               width: width, height: height)
+            if let visible, below.minY < visible.minY + 8 {
+                frame = above          // no room underneath; flip over the top
+            } else {
+                frame = below
+            }
         }
         let target = clamped(frame)
 
@@ -268,8 +290,7 @@ final class GhostOverlay {
         var f = frame
         if f.maxX > visible.maxX { f.origin.x = visible.maxX - f.width - 8 }
         if f.minX < visible.minX { f.origin.x = visible.minX + 8 }
-        // Flip above when within 40pt of the bottom edge, per spec.
-        if f.minY < visible.minY + 40 { f.origin.y = visible.minY + 48 }
+        if f.minY < visible.minY + 8 { f.origin.y = visible.minY + 8 }
         if f.maxY > visible.maxY { f.origin.y = visible.maxY - f.height - 8 }
         return f
     }
