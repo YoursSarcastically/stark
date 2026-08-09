@@ -1,50 +1,41 @@
 import AppKit
 
-/// The suggestion, drawn as a pill whose left cap **is** the caret.
+/// The suggestion, drawn as text on a rail rather than as a container.
 ///
-/// The silhouette is asymmetric on purpose: square on the left, capped on the
-/// right. That shape says "this continues from here" — the panel reads as the
-/// text cursor extended rightward rather than as a separate object arriving
-/// from elsewhere, so there is no distance for the eye to close.
+/// There is no panel here — no fill, no border, no capsule. The suggestion is
+/// set in the host's own body size, one step dimmer than the text the user
+/// typed, with a thin rule running underneath it that starts at the caret in
+/// the accent colour and fades out toward the tail. The rail is the only
+/// chrome, and it is 1.5pt tall.
 ///
-/// Four rules, each fixing something an earlier version got wrong:
-///
-///  1. **The hint is the quietest thing in the object.** A bone-white "TAB" on
-///     near-black is the highest-contrast element on screen, which sends the eye
-///     to the shortcut before the suggestion. It sits at 9pt in the fill's own
-///     mid-tone instead.
-///  2. **The text is one flat colour.** Fading it toward the tail to express
-///     model confidence just reads as a rendering bug.
-///  3. **The caret rule is 2pt and inset**, not a 4pt stripe down the edge — a
-///     saturated bar on the left is the universal pattern for a validation error.
-///  4. **It is barely taller than a line.** Something that appears every few
-///     seconds must be smaller than the thing it describes.
+/// This is the honest end state of everything that came before it. Each earlier
+/// version added something to make the suggestion feel like an object — a fill,
+/// a border, a glow, glass — and every one of those made it compete with the
+/// sentence it was supposed to be continuing. Removing the container removes
+/// the competition: the eye reads one line of text, and the rail says which
+/// part of it hasn't been committed yet.
 @MainActor
 final class GhostOverlay {
 
     private var panel: NSPanel?
     private let host = NSView()
-    private let fill = CAGradientLayer()
-    private let fillMask = CAShapeLayer()
-    private let border = CAShapeLayer()
-    private let caretRule = CALayer()
     private let label = NSTextField(labelWithString: "")
     private let hint = NSTextField(labelWithString: "TAB")
+    private let rail = CAGradientLayer()
     private var dots: [CALayer] = []
 
     private(set) var isVisible = false
     private var anchor: CGPoint = .zero
     private var thinking = false
 
-    // 26pt against a 15pt body is roughly 1.7x the line — enough to be an
-    // object, small enough to stay subordinate to the sentence.
-    private let height: CGFloat = 26
+    private let height: CGFloat = 24
     private let bodySize: CGFloat = 15
-    private let capRadius: CGFloat = 13
-    private let caretWidth: CGFloat = 2
-    private let leftPad: CGFloat = 10
-    private let rightPad: CGFloat = 9
-    private let thinkingWidth: CGFloat = 44
+    /// Distance from the top of the frame to the text baseline area; the rail
+    /// hangs just under it.
+    private let railInset: CGFloat = 4
+    private let railHeight: CGFloat = 1.5
+    private let leadIn: CGFloat = 3
+    private let thinkingWidth: CGFloat = 40
 
     init() {
         let p = NSPanel(contentRect: .zero,
@@ -62,11 +53,11 @@ final class GhostOverlay {
         host.wantsLayer = true
         host.layer?.masksToBounds = false
 
-        fill.startPoint = CGPoint(x: 0, y: 0.5)
-        fill.endPoint = CGPoint(x: 1, y: 0.5)
-        fill.mask = fillMask
-        border.fillColor = nil
-        border.lineWidth = 1
+        // Full strength where the suggestion begins, gone by the end — the rail
+        // points back at the caret it grew out of.
+        rail.startPoint = CGPoint(x: 0, y: 0.5)
+        rail.endPoint = CGPoint(x: 1, y: 0.5)
+        rail.locations = [0, 0.55, 1]
 
         label.isBezeled = false
         label.isEditable = false
@@ -79,11 +70,10 @@ final class GhostOverlay {
         hint.isEditable = false
         hint.drawsBackground = false
         hint.alignment = .center
+        hint.font = .systemFont(ofSize: 9, weight: .semibold)
         hint.translatesAutoresizingMaskIntoConstraints = false
 
-        host.layer?.addSublayer(fill)
-        host.layer?.addSublayer(border)
-        host.layer?.addSublayer(caretRule)
+        host.layer?.addSublayer(rail)
         for _ in 0..<3 {
             let d = CALayer()
             d.cornerRadius = 1.5
@@ -95,10 +85,10 @@ final class GhostOverlay {
         host.addSubview(hint)
 
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: leftPad),
-            label.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-            hint.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
-            hint.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: leadIn),
+            label.topAnchor.constraint(equalTo: host.topAnchor),
+            hint.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 9),
+            hint.centerYAnchor.constraint(equalTo: label.centerYAnchor),
         ])
 
         p.contentView = host
@@ -109,28 +99,25 @@ final class GhostOverlay {
         NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
-    /// The container tints with its host — dark ink on dark, warm paper on
-    /// light — while the geometry never changes.
     private func applyPalette() {
         let dark = isDark
-        let ink: NSColor = dark ? .white
-            : NSColor(calibratedRed: 0.12, green: 0.10, blue: 0.08, alpha: 1)
-        fill.colors = [ink.withAlphaComponent(dark ? 0.15 : 0.085).cgColor,
-                       ink.withAlphaComponent(dark ? 0.09 : 0.055).cgColor]
-        border.strokeColor = ink.withAlphaComponent(dark ? 0.20 : 0.11).cgColor
-        caretRule.backgroundColor = NSColor(calibratedRed: 0.85, green: 0.42, blue: 0.28,
-                                            alpha: dark ? 0.85 : 0.75).cgColor
-        label.textColor = dark ? NSColor(calibratedWhite: 1, alpha: 0.92)
-                               : NSColor(calibratedWhite: 0.10, alpha: 1)
-        hint.textColor = ink.withAlphaComponent(dark ? 0.34 : 0.40)
-        let dotColor = ink.withAlphaComponent(dark ? 0.45 : 0.40).cgColor
+        // One step down from committed text: clearly a suggestion, still
+        // comfortably readable.
+        label.textColor = dark ? NSColor(calibratedWhite: 1, alpha: 0.72)
+                               : NSColor(calibratedWhite: 0, alpha: 0.62)
+        hint.textColor = dark ? NSColor(calibratedWhite: 1, alpha: 0.28)
+                              : NSColor(calibratedWhite: 0, alpha: 0.32)
+        let accent = NSColor(calibratedRed: 0.90, green: 0.45, blue: 0.28, alpha: 1)
+        rail.colors = [accent.withAlphaComponent(dark ? 0.95 : 0.85).cgColor,
+                       accent.withAlphaComponent(dark ? 0.45 : 0.40).cgColor,
+                       accent.withAlphaComponent(0).cgColor]
+        let dotColor = (dark ? NSColor(calibratedWhite: 1, alpha: 0.45)
+                             : NSColor(calibratedWhite: 0, alpha: 0.40)).cgColor
         dots.forEach { $0.backgroundColor = dotColor }
     }
 
     // MARK: presentation
 
-    /// Three dots while the model works. Never a spinner: a spinner implies an
-    /// indeterminate wait, and this resolves in well under a second.
     func showThinking(caret: CGRect?, window: CGRect?) {
         guard let panel else { return }
         thinking = true
@@ -142,24 +129,18 @@ final class GhostOverlay {
 
     func showSuggestion(_ text: String, caret: CGRect?, window: CGRect?) {
         guard !text.isEmpty, let panel else { return }
-        let wasThinking = thinking
         thinking = false
         label.font = .systemFont(ofSize: bodySize)
         label.stringValue = text
-        hint.font = .systemFont(ofSize: 9, weight: .semibold)
         hint.stringValue = "TAB"
         applyPalette()
-
-        let width = min(leftPad + label.intrinsicContentSize.width + 8
-                        + hint.intrinsicContentSize.width + rightPad, 520)
-        place(width: width, caret: caret, window: window, panel: panel,
-              unroll: wasThinking || !isVisible)
+        let width = min(leadIn + label.intrinsicContentSize.width + 9
+                        + hint.intrinsicContentSize.width + 6, 560)
+        place(width: width, caret: caret, window: window, panel: panel)
     }
 
-    private func place(width: CGFloat, caret: CGRect?, window: CGRect?,
-                       panel: NSPanel, unroll: Bool = true) {
-        // Butted against the text with no gap — the pill IS the caret, and any
-        // gap breaks that reading.
+    private func place(width: CGFloat, caret: CGRect?, window: CGRect?, panel: NSPanel) {
+        // Sits on the caret's own line, starting where the text stopped.
         if let caret {
             anchor = CGPoint(x: caret.maxX, y: caret.midY - height / 2)
         } else if let window {
@@ -170,67 +151,40 @@ final class GhostOverlay {
         }
         let target = clamped(CGRect(origin: anchor,
                                     size: CGSize(width: width, height: height)))
-
-        if !isVisible {
-            // Unrolls left to right: width animates, opacity does not. Fading in
-            // makes it drift into place; growing out of the caret makes it look
-            // like it was always there.
+        let first = !isVisible
+        if first {
             var start = target
-            start.size.width = unroll ? caretWidth : target.width
+            start.size.width = leadIn
             panel.setFrame(start, display: false)
             panel.alphaValue = 1
             panel.orderFrontRegardless()
             isVisible = true
-            layout(size: start.size)
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.18
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.85, 0.3, 1)
-                panel.animator().setFrame(target, display: true)
-            }, completionHandler: { [weak self] in
-                guard let self, self.isVisible else { return }
-                self.layout(size: target.size)
-            })
-        } else {
-            panel.setFrame(target, display: true)
-            layout(size: target.size)
-            panel.orderFrontRegardless()
         }
-    }
-
-    /// Square on the left, capped on the right: radius 0 / 13 / 13 / 0.
-    private func pillPath(_ size: CGSize, inset: CGFloat = 0) -> CGPath {
-        let r = max(min(capRadius, size.height / 2) - inset, 0)
-        let rect = CGRect(x: inset, y: inset,
-                          width: max(size.width - inset * 2, r * 2),
-                          height: max(size.height - inset * 2, 0))
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
-        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
-                    tangent2End: CGPoint(x: rect.maxX, y: rect.midY), radius: r)
-        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
-                    tangent2End: CGPoint(x: rect.maxX - r, y: rect.maxY), radius: r)
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
+        // Width animates, opacity doesn't: the rail extends out of the caret
+        // rather than fading into place.
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = first ? 0.18 : 0.09
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.85, 0.3, 1)
+            panel.animator().setFrame(target, display: true)
+        }, completionHandler: { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.layout(size: target.size)
+        })
+        layout(size: target.size)
     }
 
     private func layout(size: CGSize) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let bounds = CGRect(origin: .zero, size: size)
-        fill.frame = bounds
-        fillMask.frame = bounds
-        fillMask.path = pillPath(size)
-        border.frame = bounds
-        border.path = pillPath(size, inset: 0.5)
-        // Inset vertically so it reads as a cursor inside the field rather than
-        // a coloured edge on the container.
-        caretRule.frame = CGRect(x: 0, y: 3, width: caretWidth, height: max(size.height - 6, 0))
-
+        // The rail spans the suggestion text only — not the TAB hint, which is
+        // annotation rather than content.
+        let railWidth = thinking ? thinkingWidth
+                                 : min(leadIn + label.intrinsicContentSize.width, size.width)
+        rail.frame = CGRect(x: 0, y: railInset, width: railWidth, height: railHeight)
+        rail.isHidden = thinking
         for (i, d) in dots.enumerated() {
             d.isHidden = !thinking
-            d.frame = CGRect(x: leftPad + CGFloat(i) * 8, y: size.height / 2 - 1.5,
+            d.frame = CGRect(x: leadIn + 2 + CGFloat(i) * 8, y: size.height / 2 - 1.5,
                              width: 3, height: 3)
         }
         CATransaction.commit()
@@ -242,11 +196,10 @@ final class GhostOverlay {
         guard isVisible, let panel else { return }
         isVisible = false
         thinking = false
-        // Depletes rather than fades: the pill gives ground back to the text.
         var end = panel.frame
-        end.size.width = caretWidth
+        end.size.width = leadIn
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.14
+            ctx.duration = 0.12
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().setFrame(end, display: true)
         }, completionHandler: { [weak self] in
