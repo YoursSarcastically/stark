@@ -30,6 +30,11 @@ final class GhostOverlay {
     /// reads as "working" rather than as a finished suggestion that happens to
     /// be short.
     private let spinner = NSProgressIndicator()
+    /// A small gradient lozenge at the leading edge. Carries the colour so the
+    /// text doesn't have to — gradient-filled text is illegible at 13pt, and a
+    /// gradient across the whole surface fights the glass behind it.
+    private let accent = NSView()
+    private let accentFill = CAGradientLayer()
     /// The border highlight. `rimHost` is fixed and carries the rounded-rect
     /// stroke as its mask; `rim` is a square conic gradient spinning inside it.
     /// The mask has to live on a separate, stationary layer — put it on the
@@ -44,13 +49,13 @@ final class GhostOverlay {
     private var anchorCentreX: CGFloat = 0
     private var centred = false
 
-    private let height: CGFloat = 36
-    private let hInset: CGFloat = 14
+    private let height: CGFloat = 40
+    private let hInset: CGFloat = 15
 
     init() {
         if #available(macOS 26.0, *) {
             let g = NSGlassEffectView()
-            g.cornerRadius = 10
+            g.cornerRadius = 13
             // `.clear` is the genuinely transparent glass; `.regular` frosts
             // heavily and, over a white page, resolves to the flat grey slab
             // this component kept looking like.
@@ -63,7 +68,7 @@ final class GhostOverlay {
             v.blendingMode = .behindWindow
             v.state = .active
             v.wantsLayer = true
-            v.layer?.cornerRadius = 10
+            v.layer?.cornerRadius = 13
             v.layer?.cornerCurve = .continuous
             v.layer?.masksToBounds = true
             backdrop = v
@@ -92,10 +97,10 @@ final class GhostOverlay {
         keycap.isEditable = false
         keycap.drawsBackground = false
         keycap.alignment = .center
-        keycap.font = .systemFont(ofSize: 9, weight: .semibold)
+        keycap.font = .systemFont(ofSize: 10, weight: .medium)
         keycap.textColor = .secondaryLabelColor
         keycap.wantsLayer = true
-        keycap.layer?.cornerRadius = 4
+        keycap.layer?.cornerRadius = 5
         keycap.layer?.cornerCurve = .continuous
         keycap.layer?.borderWidth = 1
         keycap.layer?.borderColor = NSColor.separatorColor.cgColor
@@ -113,12 +118,12 @@ final class GhostOverlay {
         // faint cool cast — a saturated rainbow here looks like a gaming laptop.
         rim.type = .conic
         rim.colors = [
-            NSColor.white.withAlphaComponent(0.06).cgColor,
-            NSColor.white.withAlphaComponent(0.10).cgColor,
-            NSColor.white.withAlphaComponent(0.70).cgColor,
-            NSColor(calibratedRed: 0.72, green: 0.82, blue: 1.0, alpha: 0.55).cgColor,
-            NSColor.white.withAlphaComponent(0.10).cgColor,
-            NSColor.white.withAlphaComponent(0.06).cgColor,
+            NSColor.white.withAlphaComponent(0.05).cgColor,
+            NSColor.white.withAlphaComponent(0.08).cgColor,
+            NSColor(calibratedRed: 0.45, green: 0.56, blue: 1.00, alpha: 0.60).cgColor,
+            NSColor(calibratedRed: 0.66, green: 0.45, blue: 0.98, alpha: 0.60).cgColor,
+            NSColor(calibratedRed: 0.95, green: 0.50, blue: 0.74, alpha: 0.35).cgColor,
+            NSColor.white.withAlphaComponent(0.05).cgColor,
         ]
         rim.locations = [0, 0.30, 0.44, 0.52, 0.66, 1]
         rim.startPoint = CGPoint(x: 0.5, y: 0.5)
@@ -126,21 +131,39 @@ final class GhostOverlay {
 
         rimMask.fillColor = nil
         rimMask.strokeColor = NSColor.white.cgColor
-        rimMask.lineWidth = 1.2
+        rimMask.lineWidth = 1.4
         rimHost.mask = rimMask
         rimHost.addSublayer(rim)
 
+        accentFill.colors = [
+            NSColor(calibratedRed: 0.40, green: 0.52, blue: 1.00, alpha: 1).cgColor,
+            NSColor(calibratedRed: 0.62, green: 0.42, blue: 0.98, alpha: 1).cgColor,
+            NSColor(calibratedRed: 0.95, green: 0.48, blue: 0.72, alpha: 1).cgColor,
+        ]
+        accentFill.startPoint = CGPoint(x: 0.5, y: 1)
+        accentFill.endPoint = CGPoint(x: 0.5, y: 0)
+        accentFill.cornerRadius = 1.75
+        accent.wantsLayer = true
+        accent.layer?.addSublayer(accentFill)
+        accent.translatesAutoresizingMaskIntoConstraints = false
+
+        content.addSubview(accent)
         content.addSubview(label)
         content.addSubview(keycap)
         content.addSubview(spinner)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: hInset),
+            accent.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: hInset),
+            accent.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            accent.widthAnchor.constraint(equalToConstant: 3.5),
+            accent.heightAnchor.constraint(equalToConstant: 17),
+
+            label.leadingAnchor.constraint(equalTo: accent.trailingAnchor, constant: 11),
             label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            keycap.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 9),
+            keycap.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 14),
             keycap.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -hInset),
             keycap.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            keycap.widthAnchor.constraint(equalToConstant: 24),
-            keycap.heightAnchor.constraint(equalToConstant: 14),
+            keycap.widthAnchor.constraint(equalToConstant: 26),
+            keycap.heightAnchor.constraint(equalToConstant: 16),
 
             spinner.centerXAnchor.constraint(equalTo: keycap.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: keycap.centerYAnchor),
@@ -208,11 +231,13 @@ final class GhostOverlay {
         // NSFont.systemFont at the standard small-control size: the same face
         // and metrics AppKit uses for menus and HUDs, rather than a bespoke
         // point size that reads as a web component.
-        label.font = .systemFont(ofSize: NSFont.systemFontSize)
+        // Medium weight and a touch of tracking: the card is read in a glance,
+        // out of the corner of the eye, over arbitrary content behind glass.
+        label.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         label.textColor = .labelColor
         label.stringValue = text.isEmpty ? "…" : text
 
-        let width = min(max(hInset + label.intrinsicContentSize.width + 9 + 24 + hInset, 120), 480)
+        let width = min(max(hInset + 3.5 + 11 + label.intrinsicContentSize.width + 14 + 26 + hInset, 130), 500)
         if isNew {
             // Deliberately ignores the caret. Anchoring beside it puts the card
             // on top of the sentence being written and makes it jump with every
@@ -251,6 +276,7 @@ final class GhostOverlay {
             panel.setFrame(target, display: true)
             panel.orderFrontRegardless()
         }
+        accentFill.frame = accent.bounds
         layoutRim(size: target.size)
         isVisible = true
     }
@@ -266,7 +292,7 @@ final class GhostOverlay {
         rimMask.path = CGPath(roundedRect: CGRect(x: 0.6, y: 0.6,
                                                   width: size.width - 1.2,
                                                   height: size.height - 1.2),
-                              cornerWidth: 9.4, cornerHeight: 9.4, transform: nil)
+                              cornerWidth: 12.4, cornerHeight: 12.4, transform: nil)
         // Square and large enough that the spinning gradient still covers the
         // corners; a conic gradient in a wide rect would sweep past the ends.
         let side = (size.width * size.width + size.height * size.height).squareRoot()

@@ -36,14 +36,10 @@ final class CompletionEngine {
     /// has moved on, but a card is still sitting over their screen claiming to
     /// describe what they were typing.
     private var expiryTimer: Timer?
-    private let suggestionLifetime: TimeInterval = 7
-    /// Pointer activity means attention has left the keyboard, so the suggestion
-    /// is stale by definition. Clicks and scrolls dismiss immediately; movement
-    /// has to clear a threshold first, or the tiniest trackpad drift would kill
-    /// every suggestion before it could be read.
+    private let suggestionLifetime: TimeInterval = 2
+    /// Deliberate pointer input — a click, a scroll, a pinch — means attention
+    /// has left the keyboard, so the suggestion is stale.
     private var mouseMonitor: Any?
-    private var mouseAnchor: NSPoint?
-    private let mouseSlop: CGFloat = 14
 
     private var enabled = false
     var isEnabled: Bool { enabled }
@@ -136,25 +132,15 @@ final class CompletionEngine {
         // front of the event like the keyboard tap does, so watching every mouse
         // move here costs nothing the user can feel.
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown,
-                       .scrollWheel, .magnify, .swipe, .leftMouseDragged]) { [weak self] event in
+            // Clicks and scrolls only. Plain movement was too noisy a signal —
+            // the pointer drifts while reading, and killing the suggestion for
+            // that made it feel like it was vanishing at random.
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown,
+                       .scrollWheel, .magnify, .swipe]) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.overlay.isVisible else { return }
-                switch event.type {
-                case .mouseMoved, .leftMouseDragged:
-                    guard let from = self.mouseAnchor else {
-                        self.mouseAnchor = NSEvent.mouseLocation
-                        return
-                    }
-                    let now = NSEvent.mouseLocation
-                    if hypot(now.x - from.x, now.y - from.y) > self.mouseSlop {
-                        completionLog.debug("dismissed: pointer moved")
-                        self.clearSuggestion()
-                    }
-                default:
-                    completionLog.debug("dismissed: pointer input")
-                    self.clearSuggestion()
-                }
+                completionLog.debug("dismissed: pointer input")
+                self.clearSuggestion()
             }
         }
 
@@ -349,7 +335,6 @@ final class CompletionEngine {
         // Anchor the pointer where it is now, and start the clock once the
         // model has actually finished — expiring mid-stream would kill a
         // suggestion the user never got to see.
-        mouseAnchor = NSEvent.mouseLocation
         expiryTimer?.invalidate()
         if !streaming {
             expiryTimer = Timer.scheduledTimer(withTimeInterval: suggestionLifetime,
@@ -445,7 +430,6 @@ final class CompletionEngine {
         suggestedFor = ""
         expiryTimer?.invalidate()
         expiryTimer = nil
-        mouseAnchor = nil
         overlay.hide()
         tap.setArmed(false)
     }
