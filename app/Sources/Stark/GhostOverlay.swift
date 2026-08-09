@@ -1,41 +1,46 @@
 import AppKit
 
-/// The suggestion, drawn as text on a rail rather than as a container.
+/// The suggestion capsule.
 ///
-/// There is no panel here — no fill, no border, no capsule. The suggestion is
-/// set in the host's own body size, one step dimmer than the text the user
-/// typed, with a thin rule running underneath it that starts at the caret in
-/// the accent colour and fades out toward the tail. The rail is the only
-/// chrome, and it is 1.5pt tall.
+/// One panel spec, every host. The fill is a blurred sample of whatever is
+/// behind it, so contrast comes from the background rather than from a colour
+/// picked in advance — which is what every earlier version got wrong, tuning a
+/// fixed colour to whichever screenshot was most recent and breaking on the
+/// next background.
 ///
-/// This is the honest end state of everything that came before it. Each earlier
-/// version added something to make the suggestion feel like an object — a fill,
-/// a border, a glow, glass — and every one of those made it compete with the
-/// sentence it was supposed to be continuing. Removing the container removes
-/// the competition: the eye reads one line of text, and the rail says which
-/// part of it hasn't been committed yet.
+/// Anatomy (from the design spec):
+///
+///     height    34 · radius 999 (full capsule, matches the caret's roundness)
+///     padding   7 / 7 / 7 / 13 — tighter on the key side so the badge
+///               reads as inset rather than as a button floating in space
+///     fill      vibrancy .16 white over blur(24) saturate(180%)
+///     stroke    1px white .16, plus an inner top highlight at .14
+///     shadow    0 10 30 -12 black .8 — the only thing separating it from the app
+///     type      14pt system, -0.003em; key badge 10pt 600 caps
+///     motion    in 180ms ease-out (fade + 4px rise); out 120ms fade only
 @MainActor
 final class GhostOverlay {
 
     private var panel: NSPanel?
-    private let host = NSView()
+    private let material = NSVisualEffectView()
+    private let content = NSView()
     private let label = NSTextField(labelWithString: "")
-    private let hint = NSTextField(labelWithString: "TAB")
-    private let rail = CAGradientLayer()
+    private let badge = NSTextField(labelWithString: "TAB")
+    private let stroke = CAShapeLayer()
+    private let topHighlight = CAShapeLayer()
     private var dots: [CALayer] = []
 
     private(set) var isVisible = false
-    private var anchor: CGPoint = .zero
     private var thinking = false
 
-    private let height: CGFloat = 24
-    private let bodySize: CGFloat = 15
-    /// Distance from the top of the frame to the text baseline area; the rail
-    /// hangs just under it.
-    private let railInset: CGFloat = 4
-    private let railHeight: CGFloat = 1.5
-    private let leadIn: CGFloat = 3
-    private let thinkingWidth: CGFloat = 40
+    private let height: CGFloat = 34
+    private let padLeft: CGFloat = 13
+    private let padRight: CGFloat = 7
+    private let gap: CGFloat = 9
+    private let badgeSize = CGSize(width: 34, height: 20)
+    private let thinkingWidth: CGFloat = 64
+    /// Rule 3: ~360pt, then truncate.
+    private let maxWidth: CGFloat = 360
 
     init() {
         let p = NSPanel(contentRect: .zero,
@@ -45,170 +50,215 @@ final class GhostOverlay {
         p.level = .statusBar
         p.backgroundColor = .clear
         p.isOpaque = false
-        p.hasShadow = false
+        p.hasShadow = true          // 0 10 30 -12 black .8, per spec
         p.ignoresMouseEvents = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         p.hidesOnDeactivate = false
 
-        host.wantsLayer = true
-        host.layer?.masksToBounds = false
+        // A blurred, saturated sample of what's behind. Legibility then comes
+        // from the host instead of from a colour guessed in advance.
+        material.material = .hudWindow
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.masksToBounds = true
+        material.translatesAutoresizingMaskIntoConstraints = false
 
-        // Full strength where the suggestion begins, gone by the end — the rail
-        // points back at the caret it grew out of.
-        rail.startPoint = CGPoint(x: 0, y: 0.5)
-        rail.endPoint = CGPoint(x: 1, y: 0.5)
-        rail.locations = [0, 0.55, 1]
+        stroke.fillColor = nil
+        stroke.lineWidth = 1
+        stroke.strokeColor = NSColor.white.withAlphaComponent(0.16).cgColor
+        topHighlight.fillColor = nil
+        topHighlight.lineWidth = 1
+        topHighlight.strokeColor = NSColor.white.withAlphaComponent(0.14).cgColor
 
         label.isBezeled = false
         label.isEditable = false
         label.drawsBackground = false
-        label.lineBreakMode = .byTruncatingTail
+        // Rule 3: a full sentence rendered twice is noise. Middle truncation
+        // keeps both the join at the caret and the ending visible, which is
+        // what tells you whether the suggestion is the one you wanted.
+        label.lineBreakMode = .byTruncatingMiddle
         label.maximumNumberOfLines = 1
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        hint.isBezeled = false
-        hint.isEditable = false
-        hint.drawsBackground = false
-        hint.alignment = .center
-        hint.font = .systemFont(ofSize: 9, weight: .semibold)
-        hint.translatesAutoresizingMaskIntoConstraints = false
+        badge.isBezeled = false
+        badge.isEditable = false
+        badge.drawsBackground = false
+        badge.alignment = .center
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = badgeSize.height / 2
+        badge.translatesAutoresizingMaskIntoConstraints = false
 
-        host.layer?.addSublayer(rail)
-        for _ in 0..<3 {
-            let d = CALayer()
-            d.cornerRadius = 1.5
-            d.isHidden = true
-            host.layer?.addSublayer(d)
-            dots.append(d)
-        }
-        host.addSubview(label)
-        host.addSubview(hint)
-
+        content.wantsLayer = true
+        content.addSubview(label)
+        content.addSubview(badge)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: leadIn),
-            label.topAnchor.constraint(equalTo: host.topAnchor),
-            hint.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 9),
-            hint.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: padLeft),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            badge.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: gap),
+            badge.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -padRight),
+            badge.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            badge.widthAnchor.constraint(equalToConstant: badgeSize.width),
+            badge.heightAnchor.constraint(equalToConstant: badgeSize.height),
         ])
 
-        p.contentView = host
-        panel = p
-    }
+        let root = NSView()
+        root.wantsLayer = true
+        root.addSubview(material)
+        material.addSubview(content)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            material.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            material.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            material.topAnchor.constraint(equalTo: root.topAnchor),
+            material.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+            content.topAnchor.constraint(equalTo: material.topAnchor),
+            content.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+        ])
+        for _ in 0..<3 {
+            let d = CALayer()
+            d.cornerRadius = 2
+            d.isHidden = true
+            content.layer?.addSublayer(d)
+            dots.append(d)
+        }
+        root.layer?.addSublayer(stroke)
+        root.layer?.addSublayer(topHighlight)
 
-    private var isDark: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        p.contentView = root
+        panel = p
+        applyPalette()
     }
 
     private func applyPalette() {
-        let dark = isDark
-        // One step down from committed text: clearly a suggestion, still
-        // comfortably readable.
-        label.textColor = dark ? NSColor(calibratedWhite: 1, alpha: 0.72)
-                               : NSColor(calibratedWhite: 0, alpha: 0.62)
-        hint.textColor = dark ? NSColor(calibratedWhite: 1, alpha: 0.28)
-                              : NSColor(calibratedWhite: 0, alpha: 0.32)
-        let accent = NSColor(calibratedRed: 0.90, green: 0.45, blue: 0.28, alpha: 1)
-        rail.colors = [accent.withAlphaComponent(dark ? 0.95 : 0.85).cgColor,
-                       accent.withAlphaComponent(dark ? 0.45 : 0.40).cgColor,
-                       accent.withAlphaComponent(0).cgColor]
-        let dotColor = (dark ? NSColor(calibratedWhite: 1, alpha: 0.45)
-                             : NSColor(calibratedWhite: 0, alpha: 0.40)).cgColor
-        dots.forEach { $0.backgroundColor = dotColor }
+        // The material supplies the surface; the type just needs to sit on it.
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = NSColor(calibratedWhite: 1, alpha: 0.95)
+        badge.font = .systemFont(ofSize: 10, weight: .semibold)
+        badge.textColor = NSColor(calibratedWhite: 1, alpha: 0.55)
+        badge.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        dots.forEach { $0.backgroundColor = NSColor.white.withAlphaComponent(0.55).cgColor }
     }
 
-    // MARK: presentation
+    // MARK: states
 
-    func showThinking(caret: CGRect?, field: CGRect?, window: CGRect?) {
+    /// Thinking — the same capsule collapsed to three dots. Never a spinner.
+    func showThinking(anchor: CGRect?) {
         guard let panel else { return }
         thinking = true
         label.stringValue = ""
-        hint.stringValue = ""
-        applyPalette()
-        place(width: thinkingWidth, caret: caret, field: field, window: window, panel: panel)
+        badge.stringValue = ""
+        place(width: thinkingWidth, in: anchor, panel: panel)
     }
 
-    func showSuggestion(_ text: String, caret: CGRect?, field: CGRect?, window: CGRect?) {
+    func showSuggestion(_ text: String, anchor: CGRect?) {
         guard !text.isEmpty, let panel else { return }
         thinking = false
-        label.font = .systemFont(ofSize: bodySize)
         label.stringValue = text
-        hint.stringValue = "TAB"
-        applyPalette()
-        let width = min(leadIn + label.intrinsicContentSize.width + 9
-                        + hint.intrinsicContentSize.width + 6, 560)
-        place(width: width, caret: caret, field: field, window: window, panel: panel)
+        badge.stringValue = "TAB"
+        let width = min(padLeft + label.intrinsicContentSize.width + gap
+                        + badgeSize.width + padRight, maxWidth)
+        place(width: width, in: anchor, panel: panel)
     }
 
-    private func place(width: CGFloat, caret: CGRect?, field: CGRect?,
-                       window: CGRect?, panel: NSPanel) {
-        // Sits on the caret's own line, starting where the text stopped.
-        if let caret {
-            anchor = CGPoint(x: caret.maxX, y: caret.midY - height / 2)
-        } else if let field {
-            // Directly BELOW the field, never inside it. Anchoring relative to
-            // the window put the rail on top of the input box being typed into,
-            // because a composer usually sits exactly where that guess landed.
-            anchor = CGPoint(x: field.minX, y: field.minY - height - 4)
-        } else if let window {
-            anchor = CGPoint(x: window.midX - width / 2, y: window.minY + 72)
-        } else if !isVisible {
+    /// Accepting — a 60ms press-in with the key badge inverted, so the keypress
+    /// is acknowledged before the text lands.
+    func flashAccept() {
+        guard isVisible else { return }
+        badge.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.92).cgColor
+        badge.textColor = NSColor(calibratedWhite: 0.08, alpha: 1)
+        let press = CABasicAnimation(keyPath: "transform.scale")
+        press.fromValue = 1.0
+        press.toValue = 0.97
+        press.duration = 0.06
+        press.autoreverses = true
+        panel?.contentView?.layer?.add(press, forKey: "press")
+    }
+
+    // MARK: placement
+
+    /// `anchor` is the caret's rect where the app reports one. The capsule sits
+    /// under the caret's bottom edge with a 6pt gap, left-aligned to it — not
+    /// centred, so it reads as hanging off the cursor rather than as a floating
+    /// object that happens to be nearby.
+    private func place(width: CGFloat, in anchor: CGRect?, panel: NSPanel) {
+        let size = CGSize(width: width, height: height)
+        let frame: CGRect
+        if let anchor {
+            let x = anchor.width > 0 ? anchor.minX : anchor.midX - width / 2
+            frame = CGRect(origin: CGPoint(x: x, y: anchor.minY - height - 6), size: size)
+        } else if isVisible {
+            frame = CGRect(origin: panel.frame.origin, size: size)
+        } else {
             return
         }
-        let target = clamped(CGRect(origin: anchor,
-                                    size: CGSize(width: width, height: height)))
-        let first = !isVisible
-        if first {
-            var start = target
-            start.size.width = leadIn
-            panel.setFrame(start, display: false)
-            panel.alphaValue = 1
+        let target = clamped(frame)
+
+        if !isVisible {
+            // In: 180ms ease-out, fade plus a 4pt rise.
+            panel.setFrame(target.offsetBy(dx: 0, dy: -4), display: false)
+            panel.alphaValue = 0
             panel.orderFrontRegardless()
             isVisible = true
+            layout(size: size)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.18
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+                panel.animator().setFrame(target, display: true)
+            }
+        } else {
+            panel.setFrame(target, display: true)
+            layout(size: size)
+            panel.orderFrontRegardless()
         }
-        // Width animates, opacity doesn't: the rail extends out of the caret
-        // rather than fading into place.
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = first ? 0.18 : 0.09
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.85, 0.3, 1)
-            panel.animator().setFrame(target, display: true)
-        }, completionHandler: { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.layout(size: target.size)
-        })
     }
 
     private func layout(size: CGSize) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        // The rail spans the suggestion text only — not the TAB hint, which is
-        // annotation rather than content.
-        let railWidth = thinking ? thinkingWidth
-                                 : min(leadIn + label.intrinsicContentSize.width, size.width)
-        rail.frame = CGRect(x: 0, y: railInset, width: railWidth, height: railHeight)
-        rail.isHidden = thinking
+        let r = size.height / 2      // radius 999: a true capsule
+        material.layer?.cornerRadius = r
+        material.layer?.cornerCurve = .continuous
+        stroke.frame = CGRect(origin: .zero, size: size)
+        stroke.path = CGPath(roundedRect: CGRect(x: 0.5, y: 0.5,
+                                                 width: size.width - 1,
+                                                 height: size.height - 1),
+                             cornerWidth: r - 0.5, cornerHeight: r - 0.5, transform: nil)
+        // Inner top highlight: the upper arc only, so the capsule catches light
+        // from above the way a physical control would.
+        let hl = CGMutablePath()
+        hl.addArc(center: CGPoint(x: size.width / 2, y: size.height / 2 - 1),
+                  radius: size.height / 2 - 1.5,
+                  startAngle: .pi * 0.15, endAngle: .pi * 0.85, clockwise: false)
+        topHighlight.frame = stroke.frame
+        topHighlight.path = hl
+
         for (i, d) in dots.enumerated() {
             d.isHidden = !thinking
-            d.frame = CGRect(x: leadIn + 2 + CGFloat(i) * 8, y: size.height / 2 - 1.5,
-                             width: 3, height: 3)
+            d.frame = CGRect(x: size.width / 2 - 14 + CGFloat(i) * 10,
+                             y: size.height / 2 - 2, width: 4, height: 4)
         }
         CATransaction.commit()
         label.isHidden = thinking
-        hint.isHidden = thinking
+        badge.isHidden = thinking
     }
 
+    /// Out: 120ms, fade only — no movement, so a suggestion the user has typed
+    /// past disappears without pulling the eye back to it.
     func hide() {
         guard isVisible, let panel else { return }
         isVisible = false
         thinking = false
-        var end = panel.frame
-        end.size.width = leadIn
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.12
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().setFrame(end, display: true)
+            panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self, !self.isVisible else { return }
             panel.orderOut(nil)
+            self.applyPalette()      // undo any accept-flash inversion
         })
     }
 
@@ -216,10 +266,11 @@ final class GhostOverlay {
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return frame }
         var f = frame
-        if f.maxX > visible.maxX { f.origin.x = visible.maxX - f.width - 4 }
-        if f.minX < visible.minX { f.origin.x = visible.minX + 4 }
-        if f.minY < visible.minY { f.origin.y = visible.minY + 4 }
-        if f.maxY > visible.maxY { f.origin.y = visible.maxY - f.height - 4 }
+        if f.maxX > visible.maxX { f.origin.x = visible.maxX - f.width - 8 }
+        if f.minX < visible.minX { f.origin.x = visible.minX + 8 }
+        // Flip above when within 40pt of the bottom edge, per spec.
+        if f.minY < visible.minY + 40 { f.origin.y = visible.minY + 48 }
+        if f.maxY > visible.maxY { f.origin.y = visible.maxY - f.height - 8 }
         return f
     }
 }

@@ -44,6 +44,8 @@ final class CompletionEngine {
 
     private var enabled = false
     var isEnabled: Bool { enabled }
+    /// Set by Escape, cleared when the focus moves or the field is emptied.
+    private var suppressed = false
 
     /// What we have watched the user type since the last reset.
     ///
@@ -97,8 +99,15 @@ final class CompletionEngine {
             switch which {
             case .accept:
                 completionLog.info("tab accept: \(self.suggestion, privacy: .public)")
+                self.overlay.flashAccept()
                 self.acceptAll()
-            case .dismiss: self.clearSuggestion()
+            case .dismiss:
+                // Rule 4: Escape dismisses for the rest of this field, not just
+                // for this one suggestion — otherwise it reappears on the next
+                // keystroke and the gesture means nothing.
+                self.suppressed = true
+                completionLog.debug("suppressed for this field (esc)")
+                self.clearSuggestion()
             case .none: break
             }
         }
@@ -114,6 +123,7 @@ final class CompletionEngine {
                         as? NSRunningApplication
                     completionLog.debug("focus -> \(app?.bundleIdentifier ?? "?", privacy: .public), buffer cleared")
                     self.typed = ""
+                    self.suppressed = false
                     self.clearSuggestion()
                     // Electron/Chromium expose nothing until asked; do it once
                     // per app, on activation, not per keystroke.
@@ -252,6 +262,7 @@ final class CompletionEngine {
         if let axLength, let previous = lastAXLength, previous > 2, axLength == 0, !typed.isEmpty {
             completionLog.debug("field emptied (\(previous) -> 0) — buffer cleared")
             typed = ""
+            suppressed = false
             lastAXLength = axLength
             return bail("field was cleared")
         }
@@ -289,13 +300,10 @@ final class CompletionEngine {
     }
 
     private func predict() {
-        guard enabled, let (prefix, element) = context() else { return }
+        guard enabled, !suppressed, let (prefix, element) = context() else { return }
         guard prefix != suggestedFor else { return }
 
-        let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        overlay.showThinking(caret: caret,
-                             field: element.flatMap { AXBridge.elementFrame(of: $0) },
-                             window: AXBridge.focusedWindowFrame())
+        overlay.showThinking(anchor: Self.anchor(for: element))
 
         pending = Task { [weak self] in
             guard let self else { return }
@@ -354,23 +362,32 @@ final class CompletionEngine {
         // At the caret where the app reports it, so the pill grows out of the
         // cursor. Apps that won't report caret geometry (Docs, much of Electron)
         // fall back to a fixed position low in the window.
-        let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
-        if let caret {
-            completionLog.info("""
-                place [\(app, privacy: .public)] caret=(\(Int(caret.minX)),\(Int(caret.minY)) \
-                \(Int(caret.width))x\(Int(caret.height)))
-                """)
-        } else {
-            let f = element.flatMap { AXBridge.elementFrame(of: $0) }
-            completionLog.info("""
-                place [\(app, privacy: .public)] NO CARET — \
-                \(f == nil ? "window fallback" : "field fallback", privacy: .public)
-                """)
+        overlay.showSuggestion(text, anchor: Self.anchor(for: element))
+    }
+
+    /// A fixed position over the focused window rather than a caret- or
+    /// field-relative one.
+    ///
+    /// Chasing the caret sounds better than it reads: the panel jumps on every
+    /// keystroke, and the apps that most need suggestions are exactly the ones
+    /// that report caret geometry badly or not at all — Google Docs claimed one
+    /// character while four had been typed. Anchoring to the field instead put
+    /// the panel over the composer being typed into. A steady position over the
+    /// document is somewhere the eye learns once and can then ignore.
+    static func anchor(for element: AXUIElement?) -> CGRect? {
+        // Rule 1: the caret, via the accessibility API. A fixed position on the
+        // display is the single thing that makes the panel feel disconnected
+        // from what is being typed.
+        if let element, let caret = AXBridge.caretRect(of: element) { return caret }
+        // The field's own frame is reported far more widely than caret bounds.
+        // Anchor to its bottom-left so the capsule hangs beneath the input
+        // rather than covering it.
+        if let element, let field = AXBridge.elementFrame(of: element) {
+            return CGRect(x: field.minX + 8, y: field.minY, width: 1, height: 0)
         }
-        overlay.showSuggestion(text, caret: caret,
-                               field: element.flatMap { AXBridge.elementFrame(of: $0) },
-                               window: AXBridge.focusedWindowFrame())
+        guard let window = AXBridge.focusedWindowFrame() else { return nil }
+        return CGRect(x: window.midX, y: window.minY + max(150, window.height * 0.22),
+                      width: 0, height: 0)
     }
 
     /// Trims the model's habits: stop tokens, quotes, a repeat of the prefix's
@@ -423,6 +440,8 @@ final class CompletionEngine {
     private func acceptAll() {
         let text = suggestion
         guard !text.isEmpty else { return }
+        // Acknowledge the keypress, then let the capsule fade on its own — the
+        // press-in has to be visible before the panel goes away.
         // Clear FIRST: insertion is asynchronous, and leaving the tap armed
         // means a second Tab lands on a suggestion that is already being typed.
         clearSuggestion()
