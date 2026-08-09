@@ -293,7 +293,9 @@ final class CompletionEngine {
         guard prefix != suggestedFor else { return }
 
         let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        overlay.showThinking(caret: caret, window: AXBridge.focusedWindowFrame())
+        overlay.showThinking(caret: caret,
+                             field: element.flatMap { AXBridge.elementFrame(of: $0) },
+                             window: AXBridge.focusedWindowFrame())
 
         pending = Task { [weak self] in
             guard let self else { return }
@@ -353,7 +355,22 @@ final class CompletionEngine {
         // cursor. Apps that won't report caret geometry (Docs, much of Electron)
         // fall back to a fixed position low in the window.
         let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        overlay.showSuggestion(text, caret: caret, window: AXBridge.focusedWindowFrame())
+        let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+        if let caret {
+            completionLog.info("""
+                place [\(app, privacy: .public)] caret=(\(Int(caret.minX)),\(Int(caret.minY)) \
+                \(Int(caret.width))x\(Int(caret.height)))
+                """)
+        } else {
+            let f = element.flatMap { AXBridge.elementFrame(of: $0) }
+            completionLog.info("""
+                place [\(app, privacy: .public)] NO CARET — \
+                \(f == nil ? "window fallback" : "field fallback", privacy: .public)
+                """)
+        }
+        overlay.showSuggestion(text, caret: caret,
+                               field: element.flatMap { AXBridge.elementFrame(of: $0) },
+                               window: AXBridge.focusedWindowFrame())
     }
 
     /// Trims the model's habits: stop tokens, quotes, a repeat of the prefix's

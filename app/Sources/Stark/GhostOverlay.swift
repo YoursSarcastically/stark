@@ -118,16 +118,16 @@ final class GhostOverlay {
 
     // MARK: presentation
 
-    func showThinking(caret: CGRect?, window: CGRect?) {
+    func showThinking(caret: CGRect?, field: CGRect?, window: CGRect?) {
         guard let panel else { return }
         thinking = true
         label.stringValue = ""
         hint.stringValue = ""
         applyPalette()
-        place(width: thinkingWidth, caret: caret, window: window, panel: panel)
+        place(width: thinkingWidth, caret: caret, field: field, window: window, panel: panel)
     }
 
-    func showSuggestion(_ text: String, caret: CGRect?, window: CGRect?) {
+    func showSuggestion(_ text: String, caret: CGRect?, field: CGRect?, window: CGRect?) {
         guard !text.isEmpty, let panel else { return }
         thinking = false
         label.font = .systemFont(ofSize: bodySize)
@@ -136,16 +136,21 @@ final class GhostOverlay {
         applyPalette()
         let width = min(leadIn + label.intrinsicContentSize.width + 9
                         + hint.intrinsicContentSize.width + 6, 560)
-        place(width: width, caret: caret, window: window, panel: panel)
+        place(width: width, caret: caret, field: field, window: window, panel: panel)
     }
 
-    private func place(width: CGFloat, caret: CGRect?, window: CGRect?, panel: NSPanel) {
+    private func place(width: CGFloat, caret: CGRect?, field: CGRect?,
+                       window: CGRect?, panel: NSPanel) {
         // Sits on the caret's own line, starting where the text stopped.
         if let caret {
             anchor = CGPoint(x: caret.maxX, y: caret.midY - height / 2)
+        } else if let field {
+            // Directly BELOW the field, never inside it. Anchoring relative to
+            // the window put the rail on top of the input box being typed into,
+            // because a composer usually sits exactly where that guess landed.
+            anchor = CGPoint(x: field.minX, y: field.minY - height - 4)
         } else if let window {
-            anchor = CGPoint(x: window.midX - width / 2,
-                             y: window.minY + max(72, window.height * 0.13))
+            anchor = CGPoint(x: window.midX - width / 2, y: window.minY + 72)
         } else if !isVisible {
             return
         }
@@ -170,7 +175,6 @@ final class GhostOverlay {
             guard let self, self.isVisible else { return }
             self.layout(size: target.size)
         })
-        layout(size: target.size)
     }
 
     private func layout(size: CGSize) {

@@ -154,8 +154,20 @@ enum AXBridge {
     }
 
     /// AX uses a top-left origin on the primary screen; Cocoa windows don't.
+    /// The screen that defines the global origin — the one whose frame starts
+    /// at (0,0). `NSScreen.screens.first` is *usually* this but is not
+    /// guaranteed to be, and on a multi-display setup picking the wrong one
+    /// offsets every caret by the height difference between the two screens.
+    private static var primaryScreen: NSScreen? {
+        NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+    }
+
+    /// Accessibility reports rects with a TOP-left origin anchored at the
+    /// primary screen; Cocoa windows use a bottom-left origin in the same
+    /// global space. The flip is against the primary screen's height for every
+    /// display, not the display the rect happens to be on.
     private static func flipToCocoa(_ r: CGRect) -> CGRect {
-        guard let primary = NSScreen.screens.first else { return r }
+        guard let primary = primaryScreen else { return r }
         let maxY = primary.frame.maxY
         return CGRect(x: r.origin.x, y: maxY - r.origin.y - r.height,
                       width: r.width, height: r.height)
@@ -177,6 +189,29 @@ enum AXBridge {
             return attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         }
         return font(at: caret - 1) ?? font(at: caret)
+    }
+
+    /// Screen frame of an element, in Cocoa coordinates.
+    ///
+    /// Reported by far more apps than caret bounds are: a field that refuses
+    /// `kAXBoundsForRange` will usually still say where it *is*. That makes it
+    /// a much better anchor than the window — placing relative to the window
+    /// guesses at where the input sits, and guessed wrong often enough to drop
+    /// the suggestion on top of the very box being typed into.
+    static func elementFrame(of element: AXUIElement) -> CGRect? {
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString,
+                                            &posRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString,
+                                            &sizeRef) == .success,
+              let posRef, let sizeRef else { return nil }
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(posRef as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(sizeRef as! AXValue, .cgSize, &size),
+              size.width > 1, size.height > 1 else { return nil }
+        return flipToCocoa(CGRect(origin: origin, size: size))
     }
 
     /// Frame of the focused window, as a last-resort anchor for the HUD.
