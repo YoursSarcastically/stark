@@ -1,117 +1,104 @@
 #!/bin/bash
-# Stark — build from source.
+# Stark — install from the terminal.
 #
-# Most people should download the DMG instead; this is for building it
-# yourself. The released app is self-contained — no Python, no model download.
+#   curl -fsSL https://raw.githubusercontent.com/YoursSarcastically/stark/main/install.sh | bash
 #
-#   git clone https://github.com/YoursSarcastically/stark.git ~/Stark
-#   cd ~/Stark && ./install.sh
+# Downloads the latest release, puts Stark in /Applications, clears the
+# quarantine flag Gatekeeper would otherwise stop it on, and launches it.
+# Nothing else is installed: no Python, no Homebrew, no command line tools.
+# The app brings its own inference engine and fetches the model on first run.
 #
-# Builds the app, sets up a private Python environment for the model server,
-# downloads the weights, and launches. Everything it creates lives in ~/.stark
-# and this folder, so uninstalling is `rm -rf ~/.stark ~/Stark`.
+# To uninstall:  rm -rf /Applications/Stark.app ~/.stark \
+#                       ~/Library/Application\ Support/Stark
+#
+# Override the source with STARK_DMG_URL=... to install from your own host.
 set -euo pipefail
-cd "$(dirname "$0")"
-HERE="$(pwd)"
 
-say() { printf "\n\033[1m%s\033[0m\n" "$1"; }
+REPO="${STARK_REPO:-YoursSarcastically/stark}"
+say()  { printf "\n\033[1m%s\033[0m\n" "$1"; }
 fail() { printf "\n\033[31m%s\033[0m\n" "$1" >&2; exit 1; }
 
-# --- 1. Machine ------------------------------------------------------------
+# --- 1. Will it run here? ---------------------------------------------------
 say "Checking this Mac…"
 [ "$(uname -s)" = "Darwin" ] || fail "Stark is macOS only."
-[ "$(uname -m)" = "arm64" ] || fail "Stark needs Apple silicon (M1/M2/M3/M4 or A-series)."
+[ "$(uname -m)" = "arm64" ] || fail "Stark needs Apple silicon (M1 or later)."
 MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 [ "$MAJOR" -ge 14 ] || fail "Stark needs macOS 14 or later (you have $(sw_vers -productVersion))."
 
 RAM_GB=$(sysctl -n hw.memsize | awk '{printf "%.0f", $1/1073741824}')
-echo "  macOS $(sw_vers -productVersion) · Apple silicon · ${RAM_GB} GB RAM"
-[ "$RAM_GB" -ge 8 ] || echo "  ⚠️  Under 8 GB — the model needs about 1.2 GB while running."
-
-if ! xcode-select -p >/dev/null 2>&1; then
-    fail "Command Line Tools missing. Run: xcode-select --install"
-fi
-
 FREE_GB=$(df -g / | tail -1 | awk '{print $4}')
-[ "$FREE_GB" -ge 4 ] || fail "Need ~4 GB free; you have ${FREE_GB} GB."
+echo "  macOS $(sw_vers -productVersion) · Apple silicon · ${RAM_GB} GB RAM · ${FREE_GB} GB free"
+[ "$RAM_GB" -ge 8 ] || echo "  Note: under 8 GB. Stark needs about 1.2 GB while running."
+# The app is small; the model it fetches afterwards is not.
+[ "$FREE_GB" -ge 4 ] || fail "Need about 4 GB free, you have ${FREE_GB} GB."
 
-# --- 2. Python environment -------------------------------------------------
-# Private to Stark so it can't collide with anything else on the machine.
-say "Setting up the model runtime (~1 min)…"
-VENV="$HOME/.stark/venv"
-if [ ! -x "$VENV/bin/python" ]; then
-    mkdir -p "$HOME/.stark"
-    /usr/bin/python3 -m venv "$VENV"
-fi
-"$VENV/bin/pip" install -q --upgrade pip
-"$VENV/bin/pip" install -q mlx-lm huggingface_hub 2>&1 | grep -v "NotOpenSSL" || true
-echo "  mlx-lm $("$VENV/bin/python" -c 'import mlx_lm; print(mlx_lm.__version__)' 2>/dev/null)"
-
-# --- 3. Model --------------------------------------------------------------
-MODEL_REPO="${STARK_MODEL_REPO:-suraj10620/stark-1.7b}"
-MODEL_DIR="$HERE/model/$(basename "$MODEL_REPO")"
-if [ ! -f "$MODEL_DIR/config.json" ]; then
-    say "Downloading the model (~900 MB, one time)…"
-    "$VENV/bin/hf" download "$MODEL_REPO" --local-dir "$MODEL_DIR"
+# --- 2. Fetch ---------------------------------------------------------------
+if [ -n "${STARK_DMG_URL:-}" ]; then
+    URL="$STARK_DMG_URL"
 else
-    say "Model already present."
+    say "Finding the latest release…"
+    URL="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+           | grep -o '"browser_download_url": *"[^"]*\.dmg"' \
+           | head -1 | sed 's/.*": *"//; s/"$//')"
+    [ -n "$URL" ] || fail "No .dmg in the latest release of $REPO. Set STARK_DMG_URL to install from elsewhere."
 fi
 
-# Some published checkpoints store `extra_special_tokens` as a list; recent
-# transformers requires a dict and crashes on load otherwise.
-"$VENV/bin/python" - "$MODEL_DIR" <<'PY' 2>/dev/null || true
-import json, os, re, shutil, sys
-p = os.path.join(sys.argv[1], "tokenizer_config.json")
-if os.path.exists(p):
-    d = json.load(open(p))
-    est = d.get("extra_special_tokens")
-    if isinstance(est, list):
-        shutil.copy(p, p + ".orig")
-        d["extra_special_tokens"] = {re.sub(r"\W+", "_", t.strip("<|>")): t for t in est}
-        json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
-        print("  patched tokenizer config")
-PY
-
-# --- 4. Config -------------------------------------------------------------
-CONFIG="$HOME/.stark/config.json"
-if [ ! -f "$CONFIG" ]; then
-    say "Writing ~/.stark/config.json…"
-    cat > "$CONFIG" <<EOF
-{
-  "port": 8765,
-  "python": "~/.stark/venv/bin/python",
-  "model": "$MODEL_DIR",
-  "maxTokens": 4096,
-  "temperature": 0.2,
-  "hotkey": "ctrl+alt+s",
-  "preset": "polish"
+TMP="$(mktemp -d)"
+# Leave nothing behind, including on a failure or a Ctrl-C partway through.
+cleanup() {
+    [ -n "${MOUNT:-}" ] && hdiutil detach "$MOUNT" -quiet 2>/dev/null || true
+    rm -rf "$TMP"
 }
-EOF
+trap cleanup EXIT INT TERM
+
+say "Downloading Stark…"
+curl -fL --progress-bar "$URL" -o "$TMP/Stark.dmg" || fail "Download failed."
+
+# --- 3. Install -------------------------------------------------------------
+say "Installing…"
+MOUNT="$TMP/mnt"
+mkdir -p "$MOUNT"
+hdiutil attach "$TMP/Stark.dmg" -nobrowse -quiet -mountpoint "$MOUNT" \
+    || fail "Could not open the disk image."
+[ -d "$MOUNT/Stark.app" ] || fail "That disk image does not contain Stark.app."
+
+# Quit a running copy first, or the replace lands under a live process and
+# macOS kills it mid-flight.
+pkill -f "Stark.app/Contents/MacOS/Stark" 2>/dev/null || true
+sleep 1
+
+DEST="/Applications/Stark.app"
+if [ -w /Applications ]; then
+    rm -rf "$DEST"
+    cp -R "$MOUNT/Stark.app" "$DEST"
 else
-    echo "  Keeping your existing ~/.stark/config.json"
+    echo "  /Applications needs an administrator; you will be asked for your password."
+    sudo rm -rf "$DEST"
+    sudo cp -R "$MOUNT/Stark.app" "$DEST"
+    sudo chown -R "$(id -u):$(id -g)" "$DEST"
 fi
 
-# --- 5. Build --------------------------------------------------------------
-say "Building Stark…"
-( cd app && ./make_app.sh >/dev/null )
-echo "  built app/build/Stark.app"
+# Stark is signed but not notarized (that needs a paid Apple Developer
+# account), so Gatekeeper refuses to open it while the quarantine flag is set.
+# Clearing it here is the same thing right-click → Open does, minus the dialog.
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
-# --- 6. Launch -------------------------------------------------------------
+# --- 4. Go ------------------------------------------------------------------
 say "Starting Stark…"
-open app/build/Stark.app
+open "$DEST"
 
 cat <<'EOF'
 
-  Stark is in your menu bar (the ⚡ icon). Two things to finish:
+  Stark is in your menu bar, top right.
 
-  1. Grant Accessibility. macOS will ask, or:
-     System Settings → Privacy & Security → Accessibility → enable Stark.
-     Rewriting text needs it — that is how the copy and paste happen.
+  Setup opens by itself and walks you through three things:
 
-  2. Give the model ~10 seconds to warm up, then select some text
-     anywhere and press ⌃⌥S.
+    1. Downloading the model — about 1.2 GB, once. It lives in
+       ~/Library/Application Support/Stark and survives app updates.
+    2. Granting permission — System Settings → Privacy & Security →
+       Accessibility. Stark needs it to replace text where you wrote it.
+    3. A first rewrite, so you can see it work.
 
-  Predictive typing (ghost-text suggestions as you type) is off by
-  default: menu bar → Predictive Typing.
+  After that: select text anywhere, press ⌘D.
 
 EOF

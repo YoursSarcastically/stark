@@ -71,8 +71,20 @@ final class ModelStore: ObservableObject {
     /// URL, and appeared to stop outright when the user switched away.
     private var activity: NSObjectProtocol?
     /// Kept when a transfer is interrupted so the next attempt continues rather
-    /// than starting a 1.2 GB download again.
-    private var resumeData: Data?
+    /// than starting a 1.2 GB download again. Written to disk, not just held in
+    /// memory: the interruption that matters is the app quitting, and losing
+    /// 300 MB of progress because of it is exactly the thing this is for.
+    private var resumeData: Data? {
+        get { try? Data(contentsOf: Self.resumeURL) }
+        set {
+            if let newValue { try? newValue.write(to: Self.resumeURL, options: .atomic) }
+            else { try? FileManager.default.removeItem(at: Self.resumeURL) }
+        }
+    }
+
+    private static var resumeURL: URL {
+        directory.appendingPathComponent(".\(fileName).resume")
+    }
 
     private init() { refresh() }
 
@@ -103,6 +115,9 @@ final class ModelStore: ObservableObject {
     }
 
     var isReady: Bool { if case .ready = state { return true }; return false }
+
+    /// True when a previous attempt left something to continue from.
+    var canResume: Bool { resumeData != nil }
 
     /// The weights, wherever they are, or nil if there are none yet.
     static func installedPath() -> String? {
@@ -145,6 +160,7 @@ final class ModelStore: ObservableObject {
                     return
                 }
                 do {
+                    self.resumeData = nil
                     // Move into place only once the transfer completed, so an
                     // interrupted download can never look like a valid model.
                     try? FileManager.default.removeItem(at: Self.destination)
@@ -160,8 +176,8 @@ final class ModelStore: ObservableObject {
         if let resumeData {
             t = URLSession.shared.downloadTask(withResumeData: resumeData,
                                                completionHandler: handler)
+            modelLog.info("resuming download from \(resumeData.count) bytes of state")
             self.resumeData = nil
-            modelLog.info("resuming download")
         } else {
             t = URLSession.shared.downloadTask(with: Self.remote, completionHandler: handler)
         }
@@ -224,6 +240,7 @@ final class ModelStore: ObservableObject {
     func remove() {
         try? FileManager.default.removeItem(at: Self.destination)
         try? FileManager.default.removeItem(at: Self.receiptURL)
+        resumeData = nil
         refresh()
     }
 

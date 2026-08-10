@@ -370,7 +370,11 @@ struct OnboardingView: View {
                     .disabled(true)
                     .opacity(0.6)
             } else {
-                primary("Download · \(ModelStore.describe(ModelStore.expectedBytes))") { models.start() }
+                primary(models.canResume
+                        ? "Resume download"
+                        : "Download · \(ModelStore.describe(ModelStore.expectedBytes))") {
+                    models.start()
+                }
             }
         case .access:
             primary(m.trusted ? "Continue" : "Skip for now") { m.step += 1 }
