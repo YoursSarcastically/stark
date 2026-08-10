@@ -3,7 +3,7 @@ import Combine
 import CryptoKit
 import os
 
-private let modelLog = Logger(subsystem: "com.stark.app", category: "model")
+private let modelLog = Logger(subsystem: "com.local.stark", category: "model")
 
 /// Fetches the model weights on first run.
 ///
@@ -109,7 +109,7 @@ final class ModelStore: ObservableObject {
         } else {
             // Wrong size means a previous run was interrupted. Leave the file
             // alone so the resume path can still use it, but do not pretend.
-            modelLog.info("model present but \(size) bytes, expected \(Self.expectedBytes)")
+            modelLog.notice("model present but \(size) bytes, expected \(Self.expectedBytes)")
             state = .missing
         }
     }
@@ -176,7 +176,7 @@ final class ModelStore: ObservableObject {
         if let resumeData {
             t = URLSession.shared.downloadTask(withResumeData: resumeData,
                                                completionHandler: handler)
-            modelLog.info("resuming download from \(resumeData.count) bytes of state")
+            modelLog.notice("resuming download from \(resumeData.count) bytes of state")
             self.resumeData = nil
         } else {
             t = URLSession.shared.downloadTask(with: Self.remote, completionHandler: handler)

@@ -170,7 +170,7 @@ final class HotKeyCenter {
         }
         if err == noErr, let ref {
             carbonRefs[id] = ref
-            hotkeyLog.info("registered \(spec.display, privacy: .public) id=\(id) via Carbon")
+            hotkeyLog.notice("registered \(spec.display, privacy: .public) id=\(id) via Carbon")
         } else {
             // err -9878 (eventHotKeyExistsErr) means another app owns the combo.
             hotkeyLog.error("Carbon registration FAILED for \(spec.display, privacy: .public) err=\(err)")
@@ -195,7 +195,7 @@ final class HotKeyCenter {
         }
         lastFire = (id, now)
         if source == "carbon" { carbonEverFired = true } else { tapEverFired = true }
-        hotkeyLog.info("FIRE id=\(id) via \(source, privacy: .public)")
+        hotkeyLog.notice("FIRE id=\(id) via \(source, privacy: .public)")
         bindings[id]?.action()
     }
 
@@ -223,7 +223,7 @@ final class HotKeyCenter {
             let err = InstallEventHandler(target, callback, 1, &eventType, nil, &ref)
             if err == noErr, let ref { handlers.append(ref) }
         }
-        hotkeyLog.info("installed \(self.handlers.count) Carbon handler(s)")
+        hotkeyLog.notice("installed \(self.handlers.count) Carbon handler(s)")
     }
 
     // MARK: event-tap path
@@ -233,7 +233,7 @@ final class HotKeyCenter {
     func startTapIfPossible() -> Bool {
         guard tap == nil else { return true }
         guard AXIsProcessTrusted() else {
-            hotkeyLog.info("event tap not started — Accessibility not granted")
+            hotkeyLog.notice("event tap not started — Accessibility not granted")
             return false
         }
         let mask = (1 << CGEventType.keyDown.rawValue)
@@ -266,7 +266,7 @@ final class HotKeyCenter {
         CGEvent.tapEnable(tap: t, enable: true)
         tap = t
         tapSource = src
-        hotkeyLog.info("event tap active")
+        hotkeyLog.notice("event tap active")
         return true
     }
 

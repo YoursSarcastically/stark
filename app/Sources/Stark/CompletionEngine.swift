@@ -102,7 +102,7 @@ final class CompletionEngine {
     func start() -> Bool {
         guard !enabled else { return true }
         guard AXBridge.trusted else {
-            completionLog.info("completion not started — Accessibility not granted")
+            completionLog.notice("completion not started — Accessibility not granted")
             return false
         }
         tap.onKey = { [weak self] code, chars, isDeletion in
@@ -112,7 +112,7 @@ final class CompletionEngine {
             guard let self else { return }
             switch which {
             case .accept:
-                completionLog.info("tab accept: \(self.suggestion, privacy: .public)")
+                completionLog.notice("tab accept: \(self.suggestion, privacy: .public)")
                 self.acceptAll()
             case .dismiss:
                 // Rule 4: Escape dismisses for the rest of this field, not just
@@ -166,7 +166,7 @@ final class CompletionEngine {
             return false
         }
         enabled = true
-        completionLog.info("predictive typing active")
+        completionLog.notice("predictive typing active")
         return true
     }
 
@@ -177,7 +177,7 @@ final class CompletionEngine {
         cancelPending()
         clearSuggestion()
         enabled = false
-        completionLog.info("predictive typing stopped")
+        completionLog.notice("predictive typing stopped")
     }
 
     // MARK: key handling
@@ -245,7 +245,7 @@ final class CompletionEngine {
     private func bail(_ reason: String) -> (prefix: String, element: AXUIElement?)? {
         if reason != lastBail {
             lastBail = reason
-            completionLog.info("no suggestion: \(reason, privacy: .public)")
+            completionLog.notice("no suggestion: \(reason, privacy: .public)")
         }
         return nil
     }
