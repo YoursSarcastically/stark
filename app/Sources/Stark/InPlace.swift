@@ -30,9 +30,16 @@ enum InPlace {
         // where posting ⌘C to ourselves does not reach the text view — which is
         // why the onboarding "try it" step showed clipboard contents instead of
         // the sentence the user had just selected.
+        // Our own process only, mirroring `paste`. Elsewhere ⌘C is the source
+        // of truth: an app that reports a stale kAXSelectedText would have us
+        // rewrite text the user is no longer looking at, which is a worse
+        // failure than the extra 30 ms a synthetic copy costs.
         if let element = AXBridge.focusedElement() {
+            var pid: pid_t = 0
             var value: CFTypeRef?
-            if AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString,
+            if AXUIElementGetPid(element, &pid) == .success,
+               pid == ProcessInfo.processInfo.processIdentifier,
+               AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString,
                                              &value) == .success,
                let text = value as? String,
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -65,20 +72,22 @@ enum InPlace {
         app?.activate()
         try? await Task.sleep(for: .milliseconds(250))
 
-        // Write over the selection through the Accessibility API when the
-        // focused element accepts it. This is the mirror of the read side: a
-        // synthetic ⌘V does not reach Stark's own text views, so the onboarding
-        // "try it" step produced a rewrite that never landed anywhere. It also
-        // spares the pasteboard entirely in every app that supports it.
-        // The settable check matters: several apps answer .success to a write
-        // they then ignore, and silently swallowing the rewrite is worse than
-        // falling through to ⌘V.
+        // The Accessibility write is for Stark's own windows and nothing else.
+        //
+        // It exists for one reason: a synthetic ⌘V does not reach our own text
+        // views, so the onboarding "try it" step produced a rewrite that landed
+        // nowhere. Letting it run against every app was a mistake — Gmail and
+        // other web editors report kAXSelectedText as settable, accept the
+        // write, return .success, and then ignore it. The rewrite vanished with
+        // no error anywhere, in the apps people use most.
+        //
+        // Checking the pid is the honest test. "Does this app implement AX text
+        // writing properly" has no reliable answer; "is this our own process"
+        // has an exact one.
         if let element = AXBridge.focusedElement() {
-            var settable = DarwinBoolean(false)
-            let asked = AXUIElementIsAttributeSettable(element,
-                                                       kAXSelectedTextAttribute as CFString,
-                                                       &settable)
-            if asked == .success, settable.boolValue,
+            var pid: pid_t = 0
+            if AXUIElementGetPid(element, &pid) == .success,
+               pid == ProcessInfo.processInfo.processIdentifier,
                AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString,
                                             text as CFTypeRef) == .success {
                 return

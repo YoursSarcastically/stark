@@ -350,7 +350,11 @@ final class CompletionEngine {
                 // Stream it: the card appears with the first token instead of
                 // after the whole generation, which is most of the perceived
                 // latency on a machine where a request takes ~0.5s.
-                let text = try await self.client.completeStreaming(prefix: prefix) { partial in
+                // What the user is writing in, so a half-typed sentence in
+                // Slack does not get finished like an email.
+                let appHint = AppContext.hint()
+                let text = try await self.client.completeStreaming(
+                    prefix: prefix, context: appHint) { partial in
                     guard !Task.isCancelled else { return }
                     // Only keep streaming into the card if the user hasn't moved on.
                     guard let (now, el) = self.context(), now == prefix else { return }

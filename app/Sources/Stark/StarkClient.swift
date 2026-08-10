@@ -23,6 +23,7 @@ struct StarkClient {
     /// arrives, so the suggestion can be shown word by word instead of after a
     /// dead half-second. The full text is still returned for the accept path.
     func completeStreaming(prefix: String,
+                           context: String? = nil,
                            onToken: @escaping @MainActor (String) -> Void) async throws -> String {
         var req = URLRequest(url: config.baseURL.appendingPathComponent("v1/chat/completions"))
         req.httpMethod = "POST"
@@ -34,7 +35,12 @@ struct StarkClient {
             "max_tokens": 24,
             "repetition_penalty": 1.1,
             "messages": [
-                ["role": "system", "content": "complete"],
+                // "complete" alone is the tag the model was fine-tuned on, so
+                // it stays exactly as it is and the app hint is appended on a
+                // second line. Rewriting the tag itself measurably degraded
+                // suggestions; adding to it did not.
+                ["role": "system",
+                 "content": context.map { "complete\nwriting \($0)" } ?? "complete"],
                 ["role": "user", "content": prefix],
             ],
             // Qwen3 reasons by default; left on, every reply arrives wrapped in
