@@ -68,6 +68,17 @@ final class CompletionEngine {
     /// being emptied (message sent, document cleared) without trusting AX's
     /// absolute values, which several apps get wrong.
     private var lastAXLength: Int?
+    /// When the buffer last grew, and the frame of the field it was typed into.
+    /// Both exist to answer one question: is what I remember typing still on
+    /// the screen in front of the user?
+    private var lastKeystrokeAt = Date.distantPast
+    private var lastFieldFrame: CGRect?
+    /// A sentence typed half a minute ago and left behind is not context, it is
+    /// a ghost. Clearing the app's buffer on app switch was not enough: moving
+    /// between two fields *inside* one app kept it, which is how a LinkedIn
+    /// composer with nothing in it was offered the end of a message typed in a
+    /// different box entirely.
+    private let bufferLifetime: TimeInterval = 25
 
     /// How long the user must pause before we spend a request.
     private let debounce: TimeInterval = 0.12
@@ -203,6 +214,7 @@ final class CompletionEngine {
             return
         }
         typed += characters
+        lastKeystrokeAt = Date()
         if typed.count > maxPrefix { typed.removeFirst(typed.count - maxPrefix) }
         completionLog.debug("buffer[\(self.typed.count)] = \(self.typed, privacy: .public)")
     }
@@ -260,6 +272,32 @@ final class CompletionEngine {
         // A DROP is real evidence: AX said 20 characters a moment ago and says 0
         // now, so the message was sent or the field cleared. An app that always
         // says 0 never triggers it.
+        // Stale by time. Nothing else here can catch a buffer whose field was
+        // closed, scrolled away, or replaced by one the app reports nothing for.
+        if !typed.isEmpty, Date().timeIntervalSince(lastKeystrokeAt) > bufferLifetime {
+            completionLog.debug("buffer expired after \(self.bufferLifetime)s — cleared")
+            typed = ""
+            return bail("buffer went stale")
+        }
+
+        // Stale by place. A different field is a different rectangle, and that
+        // survives web content handing back a fresh AXUIElement every query,
+        // which makes identity comparisons useless.
+        if let frame = element.flatMap({ AXBridge.elementFrame(of: $0) }) {
+            if let previous = lastFieldFrame, !typed.isEmpty,
+               abs(previous.origin.x - frame.origin.x) > 6
+                || abs(previous.origin.y - frame.origin.y) > 6
+                || abs(previous.width - frame.width) > 6
+                || abs(previous.height - frame.height) > 24 {
+                completionLog.debug("field moved — buffer cleared")
+                typed = ""
+                lastFieldFrame = frame
+                lastAXLength = nil
+                return bail("focus moved to another field")
+            }
+            lastFieldFrame = frame
+        }
+
         let axLength = element.flatMap { AXBridge.stringValue(of: $0)?.count }
         if let axLength, let previous = lastAXLength, previous > 2, axLength == 0, !typed.isEmpty {
             completionLog.debug("field emptied (\(previous) -> 0) — buffer cleared")
