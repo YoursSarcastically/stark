@@ -360,15 +360,12 @@ final class CompletionEngine {
         // At the caret where the app reports it, so the pill grows out of the
         // cursor. Apps that won't report caret geometry (Docs, much of Electron)
         // fall back to a fixed position low in the window.
-        // Inline at the caret, in the field's own font, so the ghost text sits
-        // exactly where the next word would be typed.
-        let caret = element.flatMap { AXBridge.caretRect(of: $0) }
-        let font = element.flatMap { el in
-            AXBridge.caretOffset(of: el).flatMap { AXBridge.fontAtCaret(of: el, caret: $0) }
-        }
-        overlay.show(text, caret: caret,
-                     field: element.flatMap { AXBridge.elementFrame(of: $0) },
-                     font: font)
+        // The glass card, positioned clear of the field it belongs to.
+        overlay.showCard(text,
+                         caret: element.flatMap { AXBridge.caretRect(of: $0) },
+                         field: element.flatMap { AXBridge.elementFrame(of: $0) },
+                         window: AXBridge.focusedWindowFrame(),
+                         streaming: streaming)
     }
 
     /// A fixed position over the focused window rather than a caret- or
