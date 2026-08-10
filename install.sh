@@ -44,12 +44,20 @@ GH_RELEASE="https://github.com/YoursSarcastically/stark/releases/latest/download
 HF_FILES="https://huggingface.co/suraj10620/stark-1.7b-gguf/resolve/main"
 
 # Prefers the first URL that actually answers, rather than assuming.
+#
+# Two attempts each, and a one-byte ranged GET rather than a HEAD: a freshly
+# published release asset can blip for a few seconds, and a single failed
+# probe would quietly drop every user onto the slower host for no reason. The
+# ranged GET also exercises the same path the real download takes.
 pick_url() {
     for candidate in "$@"; do
-        if curl -fsIL -m 12 -o /dev/null "$candidate" 2>/dev/null; then
-            printf '%s' "$candidate"
-            return 0
-        fi
+        for attempt in 1 2; do
+            if curl -fsL -m 15 -r 0-0 -o /dev/null "$candidate" 2>/dev/null; then
+                printf '%s' "$candidate"
+                return 0
+            fi
+            [ "$attempt" = 1 ] && sleep 2
+        done
     done
     return 1
 }
