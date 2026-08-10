@@ -151,6 +151,7 @@ struct OnboardingView: View {
     let onFinish: () -> Void
 
     @StateObject private var m = OnboardingModel()
+    @StateObject private var models = ModelStore()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let slop = "i cant beleive how fast this modle runs on my mac"
@@ -161,7 +162,7 @@ struct OnboardingView: View {
     /// screen for a product they had no feel for yet. Personas moved to the
     /// menu bar, where they belong once someone actually wants them.
     private enum Step: Int, CaseIterable {
-        case welcome, access, tryIt, done
+        case welcome, model, access, tryIt, done
     }
     private var step: Step { Step(rawValue: m.step) ?? .welcome }
 
@@ -247,6 +248,7 @@ struct OnboardingView: View {
     private func title(_ s: Step) -> String {
         switch s {
         case .welcome: return "Welcome"
+        case .model:   return "Download model"
         case .access:  return "Grant access"
         case .tryIt:   return "Try it"
         case .done:    return "You're set"
@@ -282,6 +284,17 @@ struct OnboardingView: View {
         switch step {
         case .welcome:
             primary("Get started") { m.step += 1 }
+        case .model:
+            // The one step that cannot be skipped — without weights there is no
+            // product. The button becomes Continue only once the file is on disk.
+            if models.isReady {
+                primary("Continue") { m.step += 1 }
+            } else if case .downloading = models.state {
+                Button("Downloading…") {}.buttonStyle(.borderedProminent)
+                    .controlSize(.large).disabled(true)
+            } else {
+                primary("Download · 1.2 GB") { models.start() }
+            }
         case .access:
             primary(m.trusted ? "Continue" : "Skip for now") { m.step += 1 }
         case .tryIt:
@@ -297,6 +310,7 @@ struct OnboardingView: View {
     private var content: some View {
         switch step {
         case .welcome: welcome
+        case .model:   modelStep
         case .access:  access
         case .tryIt:   tryIt
         case .done:    done
@@ -344,6 +358,69 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Progress for a download people will otherwise assume has hung. A bare
+    /// spinner for three minutes reads as broken; bytes and a bar read as work.
+    private var modelStep: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Spacer(minLength: 0)
+            heading(models.isReady ? "The model is ready." : "One download, then it's yours.",
+                    models.isReady
+                    ? "It lives on this Mac from here on. Nothing is fetched again, and nothing you write is ever uploaded."
+                    : "Stark runs a 1.7-billion-parameter model locally, so the weights have to live on your Mac. It is a one-time download of about 1.2 GB.")
+
+            switch models.state {
+            case .ready:
+                statusCard(symbol: "checkmark.circle.fill", tint: .green,
+                           title: "Downloaded",
+                           detail: "Stored in Application Support · delete anytime")
+            case .downloading(let fraction, let received, let total):
+                VStack(alignment: .leading, spacing: 9) {
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.linear)
+                    HStack {
+                        Text("\(ModelStore.describe(received)) of \(ModelStore.describe(total))")
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Int(fraction * 100))%")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .monospacedDigit()
+                    }
+                }
+                .padding(16)
+                .background(.quaternary.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.separator, lineWidth: 1))
+            case .failed(let why):
+                statusCard(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                           title: "Download failed", detail: why)
+            case .missing:
+                statusCard(symbol: "arrow.down.circle", tint: .secondary,
+                           title: "Not downloaded yet",
+                           detail: "About 1.2 GB · takes a few minutes on most connections")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func statusCard(symbol: String, tint: Color,
+                            title: String, detail: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).font(.system(size: 19)).foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.4),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(.separator, lineWidth: 1))
     }
 
     private var access: some View {
@@ -476,7 +553,7 @@ struct OnboardingView: View {
         HStack(spacing: 14) {
             DemoView(demo) { fallback }
                 .scaleEffect(0.38, anchor: .center)
-                .frame(width: 150, height: 44)
+                .frame(width: DemoView.w * 0.38, height: DemoView.h * 0.38)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .medium))
                 Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)

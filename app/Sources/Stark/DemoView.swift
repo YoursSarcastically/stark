@@ -17,7 +17,8 @@ import AppKit
 ///     aura.gif      · the menu bar showing accepted rewrites accumulating
 struct DemoView: View {
     /// Matches the canvas in tools/make_demos.py (520x150 at 1x).
-    static let aspect: CGFloat = 520.0 / 150.0
+    static let w: CGFloat = 392
+    static let h: CGFloat = 113
 
     let name: String
     let fallback: AnyView
@@ -32,7 +33,7 @@ struct DemoView: View {
             if let url = Bundle.main.url(forResource: name, withExtension: "gif",
                                          subdirectory: "demos"),
                let image = NSImage(contentsOf: url) {
-                AnimatedGIF(image: image)
+                AnimatedGIF(image: image, target: NSSize(width: Self.w, height: Self.h))
             } else {
                 fallback
             }
@@ -42,7 +43,7 @@ struct DemoView: View {
         // SwiftUI hands the view every available point — the artwork then
         // scaled up until the type was enormous and clipped. 392x113 is the
         // canvas ratio exactly (520:150), so nothing is cropped.
-        .frame(width: 392, height: 113)
+        .frame(width: Self.w, height: Self.h)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
@@ -63,19 +64,24 @@ private struct AnimatedGIF: NSViewRepresentable {
         var timer: Timer?
         var index = 0
 
-        init(_ image: NSImage) {
+        /// Frames are built at the exact point size the view will display, so
+        /// nothing depends on NSImageView's scaling behaviour. Relying on
+        /// `.scaleProportionallyDown` did not work: NSImage reports the GIF's
+        /// pixel dimensions as its point size, so each frame drew at 1:1 inside
+        /// a 392x113 view and was cropped to the top-left corner.
+        init(_ image: NSImage, target: NSSize) {
             guard let data = image.tiffRepresentation,
                   let rep = NSBitmapImageRep(data: data),
                   let count = rep.value(forProperty: .frameCount) as? Int, count > 1
-            else { frames = [image]; delays = [1]; return }
+            else { image.size = target; frames = [image]; delays = [1]; return }
             for i in 0..<count {
                 rep.setProperty(.currentFrame, withValue: i)
                 guard let cg = rep.cgImage else { continue }
-                frames.append(NSImage(cgImage: cg, size: rep.size))
+                frames.append(NSImage(cgImage: cg, size: target))
                 let d = rep.value(forProperty: .currentFrameDuration) as? TimeInterval
                 delays.append(max(d ?? 0.05, 0.02))
             }
-            if frames.isEmpty { frames = [image]; delays = [1] }
+            if frames.isEmpty { image.size = target; frames = [image]; delays = [1] }
         }
 
         func start(_ view: NSImageView) {
@@ -100,11 +106,13 @@ private struct AnimatedGIF: NSViewRepresentable {
         func stop() { timer?.invalidate(); timer = nil }
     }
 
-    func makeCoordinator() -> Player { Player(image) }
+    let target: NSSize
+
+    func makeCoordinator() -> Player { Player(image, target: target) }
 
     func makeNSView(context: Context) -> NSImageView {
         let v = NSImageView()
-        v.imageScaling = .scaleProportionallyDown
+        v.imageScaling = .scaleProportionallyUpOrDown
         v.imageAlignment = .alignCenter
         context.coordinator.start(v)
         return v
