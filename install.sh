@@ -3,10 +3,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/YoursSarcastically/stark/main/install.sh | bash
 #
-# Downloads the latest release, puts Stark in /Applications, clears the
+# Downloads the app and the model, puts Stark in /Applications, clears the
 # quarantine flag Gatekeeper would otherwise stop it on, and launches it.
 # Nothing else is installed: no Python, no Homebrew, no command line tools.
-# The app brings its own inference engine and fetches the model on first run.
+# The app brings its own inference engine, so this and the weights are all
+# that ever touch the machine.
 #
 # To uninstall:  rm -rf /Applications/Stark.app ~/.stark \
 #                       ~/Library/Application\ Support/Stark
