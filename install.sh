@@ -33,11 +33,33 @@ echo "  macOS $(sw_vers -productVersion) · Apple silicon · ${RAM_GB} GB RAM ·
 [ "$FREE_GB" -ge 4 ] || fail "Need about 4 GB free, you have ${FREE_GB} GB."
 
 # --- 2. Fetch ---------------------------------------------------------------
-# Hugging Face rather than GitHub Releases: the model already lives there, so
-# the app and its weights come from one host, and publishing a build needs no
-# token beyond the one that pushes the model.
-DMG_URL_DEFAULT="https://huggingface.co/suraj10620/stark-1.7b-gguf/resolve/main/Stark.dmg"
-URL="${STARK_DMG_URL:-$DMG_URL_DEFAULT}"
+# GitHub Releases first, Hugging Face second.
+#
+# Both work; GitHub is simply faster. Measured back to back on one connection:
+# 3.8 MB/s from GitHub's release CDN against 0.7 MB/s from Hugging Face, and
+# on a 1.2 GB model that is the difference between five minutes and half an
+# hour. Hugging Face stays as the fallback so a missing or half-published
+# release cannot leave anyone stranded.
+GH_RELEASE="https://github.com/YoursSarcastically/stark/releases/latest/download"
+HF_FILES="https://huggingface.co/suraj10620/stark-1.7b-gguf/resolve/main"
+
+# Prefers the first URL that actually answers, rather than assuming.
+pick_url() {
+    for candidate in "$@"; do
+        if curl -fsIL -m 12 -o /dev/null "$candidate" 2>/dev/null; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [ -n "${STARK_DMG_URL:-}" ]; then
+    URL="$STARK_DMG_URL"
+else
+    URL="$(pick_url "$GH_RELEASE/Stark.dmg" "$HF_FILES/Stark.dmg")" \
+        || fail "Could not reach GitHub or Hugging Face to download Stark."
+fi
 
 TMP="$(mktemp -d)"
 # Leave nothing behind, including on a failure or a Ctrl-C partway through.
@@ -89,7 +111,12 @@ MODEL_NAME="stark-1.7b-Q5_K_M.gguf"
 MODEL_PATH="$MODEL_DIR/$MODEL_NAME"
 MODEL_BYTES=1257879776
 MODEL_SHA=7a2af84dd97030b660bcf6ae2d7ec11d0b43c3f5cdb204b2d2eea0663c7697b8
-MODEL_URL="${STARK_MODEL_URL:-https://huggingface.co/suraj10620/stark-1.7b-gguf/resolve/main/$MODEL_NAME}"
+if [ -n "${STARK_MODEL_URL:-}" ]; then
+    MODEL_URL="$STARK_MODEL_URL"
+else
+    MODEL_URL="$(pick_url "$GH_RELEASE/$MODEL_NAME" "$HF_FILES/$MODEL_NAME")" \
+        || fail "Could not reach GitHub or Hugging Face to download the model."
+fi
 
 mkdir -p "$MODEL_DIR"
 have_model() {
