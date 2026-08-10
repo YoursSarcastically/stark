@@ -389,8 +389,18 @@ struct OnboardingView: View {
         }
     }
 
-    private func heading(_ title: String, _ sub: String) -> some View {
+    private func heading(_ title: String, _ sub: String,
+                         kicker: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 9) {
+            // Says what the thing *is* before it says what it does. Without it
+            // the first screen opened on a claim with no product attached.
+            if let kicker {
+                Text(kicker)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(0.9)
+                    .foregroundStyle(Color.brand)
+                    .padding(.bottom, 1)
+            }
             Text(title)
                 .font(.system(size: 30, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
@@ -408,7 +418,8 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 22) {
             Spacer(minLength: 0)
             heading("You write. I'll handle the rest.",
-                    "Select text anywhere, press one key, and I rewrite it in place.")
+                    "Select text anywhere, press one key, and I rewrite it in place.",
+                    kicker: "AN ON-DEVICE AI AGENT THAT FIXES YOUR WRITING")
             DemoView("rewrite") { RewriteDemo() }
                 .padding(9)
                 .glassCard(radius: 16)
