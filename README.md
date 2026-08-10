@@ -93,24 +93,22 @@ personas in the appendix.
 
 ```bash
 git clone https://github.com/YoursSarcastically/stark.git ~/Stark
-cd ~/Stark
-
-# 1. The engine: download the fused model…
-pip install -U huggingface_hub
-hf download suraj10620/stark-1.5b --local-dir model/stark-1.5b
-#    …or forge your own from scratch (see appendix; one seeded script, ~3 min of training)
-
-# 2. The suit: build the app (needs Xcode command line tools)
-cd app && ./make_app.sh
-
-# 3. Ignition (arc reactor optional; Apple silicon will do)
-open build/Stark.app
+cd ~/Stark && ./install.sh
 ```
 
-The server needs a Python with `mlx-lm` (`pip install mlx-lm`); point the
-`python` field of `~/.stark/config.json` at it if it isn't the default. Give
-the model ~10 seconds to warm up (menu-bar icon → "Model server: running"),
-then select some text and press **⌃⌥S**.
+That builds the app, sets up a private Python environment in `~/.stark`,
+downloads the model, and launches. Needs macOS 14+, Apple silicon, about 4 GB
+of disk, and Xcode Command Line Tools (`xcode-select --install`).
+
+Two things afterwards: grant **Accessibility** when macOS asks — that is how
+the invisible copy and paste happen, and rewriting does nothing without it —
+then give the model about ten seconds to warm up, select some text anywhere and
+press **⌃⌥S**.
+
+Ghost-text predictions as you type are off by default; turn them on from the
+menu bar → **Predictive Typing**.
+
+To remove everything: `rm -rf ~/.stark ~/Stark`.
 
 ## Why it's fast and small
 
