@@ -52,11 +52,11 @@ struct HotKeySpec {
         guard modifiers == ["cmd"] else { return nil } // only plain-⌘ is dangerous
         switch key {
         case "c", "v", "x":
-            return "⌘\(key.uppercased()) is copy/paste — Stark needs it to move your text."
+            return "⌘\(key.uppercased()) is copy/paste. Stark needs it to move your text."
         case "q", "w":
             return "⌘\(key.uppercased()) quits or closes windows. Pick another key."
         case "z":
-            return "⌘Z is undo — Stark uses it to revert a rewrite."
+            return "⌘Z is undo. Stark uses it to revert a rewrite."
         default:
             return nil
         }

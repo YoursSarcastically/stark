@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { status in
                 MainActor.assumeIsolated { [weak self] in
-                    self?.serverStatusMenuItem?.title = "Model server: \(status.label)"
+                    self?.serverStatusMenuItem?.title = "Stark: \(status.label)"
                 }
             }
             .store(in: &bag)
@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshAccessibilityItem() {
         guard let it = accessibilityMenuItem else { return }
         let ok = InPlace.trusted
-        it.title = ok ? "Accessibility: granted" : "Accessibility: not granted — Fix…"
+        it.title = ok ? "Permission: granted" : "Permission: still needed. Fix…"
         it.isEnabled = !ok
         let symbol = ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
         let colour: NSColor = ok ? .systemGreen : .systemOrange
@@ -232,39 +232,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item("Copy Original of Last Rewrite", symbol: "doc.on.doc",
                           action: #selector(copyOriginal(_:))))
 
-        let predict = item("Predictive Typing", symbol: "text.cursor",
+        let predict = item("Finish My Sentences", symbol: "text.cursor",
                            action: #selector(toggleCompletion))
         menu.addItem(predict)
         completionMenuItem = predict
 
-        menu.addItem(.sectionHeader(title: "Learning"))
+        menu.addItem(.sectionHeader(title: "Learning Your Style"))
 
         let auraStatus = NSMenuItem(title: "Aura: off", action: nil, keyEquivalent: "")
         auraStatus.isEnabled = false
         menu.addItem(auraStatus)
         auraStatusItem = auraStatus
 
-        let train = item("Train Aura Now", symbol: "brain", action: #selector(trainAura))
+        let train = item("Update My Style Now", symbol: "brain", action: #selector(trainAura))
         menu.addItem(train)
         auraTrainItem = train
 
-        menu.addItem(item("Forget Aura Data", symbol: "trash", action: #selector(forgetAura)))
+        menu.addItem(item("Forget What It Learned", symbol: "trash", action: #selector(forgetAura)))
 
         menu.addItem(.sectionHeader(title: "Status"))
 
-        let status = NSMenuItem(title: "Model server: …", action: nil, keyEquivalent: "")
+        let status = NSMenuItem(title: "Stark: starting…", action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
         serverStatusMenuItem = status
 
         // Silent Accessibility failure is the single most confusing way for Stark
         // to break, so its state is always visible and one click from fixing.
-        let access = item("Accessibility", symbol: "hand.raised",
+        let access = item("Permission", symbol: "hand.raised",
                           action: #selector(openAccessibilitySettings))
         menu.addItem(access)
         accessibilityMenuItem = access
 
-        menu.addItem(item("Restart Server", symbol: "arrow.clockwise",
+        menu.addItem(item("Restart Stark", symbol: "arrow.clockwise",
                           action: #selector(restartServer)))
         menu.addItem(item("Run Setup…", symbol: "sparkles", action: #selector(runSetup)))
 
@@ -316,7 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func trainAura() {
         guard !auraTraining else { return }
         auraTraining = true
-        auraStatusItem?.title = "Aura: training… (a few minutes)"
+        auraStatusItem?.title = "Aura: studying your style… (a few minutes)"
         let python = config.pythonPath
         let script = URL(fileURLWithPath: config.modelPath).deletingLastPathComponent()
             .appendingPathComponent("aura_train.py").path
@@ -338,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.auraTraining = false
                 self.auraStatusItem?.title = succeeded
-                    ? "Aura: model updated ✓"
+                    ? "Aura: caught up ✓"
                     : "Aura: training failed (~/.stark/aura/train.log)"
                 if succeeded { self.server.restart() }
             }
@@ -359,10 +359,10 @@ extension AppDelegate: NSMenuDelegate {
             guard !auraTraining else { return }
             if config.aura {
                 let n = AuraStore.shared.count()
-                auraStatusItem?.title = "Aura: learning · \(n) example\(n == 1 ? "" : "s")"
+                auraStatusItem?.title = "Aura: on · \(n) rewrite\(n == 1 ? "" : "s") kept"
                 auraTrainItem?.isEnabled = n >= 8
             } else {
-                auraStatusItem?.title = "Aura: off (enable via Run Setup…)"
+                auraStatusItem?.title = "Aura: off"
                 auraTrainItem?.isEnabled = false
             }
         }

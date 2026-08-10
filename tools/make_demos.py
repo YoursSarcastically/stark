@@ -194,7 +194,7 @@ def demo_aura():
     for n in range(0, 8):
         for step in range(2):
             img, d = frame()
-            d.text((32 * SCALE, 34 * SCALE), "Aura — learning your voice",
+            d.text((32 * SCALE, 34 * SCALE), "Aura, learning your voice",
                    font=F_LABEL, fill=ACCENT)
             val = str(n)
             d.text((32 * SCALE, 54 * SCALE), val, font=F_BIG, fill=TEXT)

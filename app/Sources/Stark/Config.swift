@@ -18,10 +18,16 @@ struct Config: Codable {
     var personas: [String: [String]] = Config.defaultPersonas
     /// Words the model must never alter; restored by a post-pass if mangled.
     var dictionary: [String] = []
-    /// Aura: log accepted rewrites as local training pairs (opt-in).
-    var aura: Bool = false
-    /// Predictive typing: ghost-text suggestions as you type, anywhere (opt-in).
-    var completion: Bool = false
+    /// Aura: log accepted rewrites as local training pairs.
+    ///
+    /// On by default. Both this and `completion` used to default off, on the
+    /// theory that anything watching what you type should be opt-in. But they
+    /// never leave the machine, they are the two features that make Stark feel
+    /// like more than a spellchecker, and defaulting them off meant most people
+    /// never saw them at all. Both are one click away in the menu bar.
+    var aura: Bool = true
+    /// Predictive typing: suggestions that finish your sentence as you type.
+    var completion: Bool = true
     var onboarded: Bool = false
 
     static let defaultPersonas: [String: [String]] = [

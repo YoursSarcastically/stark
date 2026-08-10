@@ -33,9 +33,16 @@ final class OnboardingController: NSObject, NSWindowDelegate {
             onPersonas: { [weak app] personas, aura in
                 app?.applyPersonas(personas, aura: aura)
             },
+            // Order and ownership both matter here. `finishOnboarding()` clears
+            // the AppDelegate's only strong reference to this controller, so
+            // `self?.window` was already nil by the time the close ran and the
+            // window simply stayed on screen after "Start writing". Hold both
+            // the controller and the window for the duration of the closure.
             onFinish: { [weak self] in
-                self?.app?.finishOnboarding()
-                self?.window?.close()
+                guard let self else { return }
+                let window = self.window
+                self.app?.finishOnboarding()
+                window?.close()
             }))
         window = w
     }
@@ -77,8 +84,8 @@ final class OnboardingModel: ObservableObject {
     @Published var emailOn = true
     @Published var notesOn = true
     @Published var codeOn = true
-    @Published var auraOn = false
-    @Published var completionOn = false
+    @Published var auraOn = true
+    @Published var completionOn = true
     @Published var playground = OnboardingView.slop
     @Published var charged = false
     private var keyMonitor: Any?
@@ -171,9 +178,19 @@ struct OnboardingView: View {
             sidebar
             Divider()
             VStack(spacing: 0) {
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.horizontal, 46)
+                // Each step slides in from the side the flow is moving. Without
+                // it a five-screen setup reads as five unrelated windows that
+                // happen to share a sidebar.
+                ZStack {
+                    content
+                        .id(m.step)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .offset(x: 26)),
+                            removal: .opacity.combined(with: .offset(x: -26))))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 46)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: m.step)
                 footer
             }
         }
@@ -329,20 +346,22 @@ struct OnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .riseIn()
     }
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 22) {
             Spacer(minLength: 0)
-            heading("Your words, only better.",
-                    "A small model, fine-tuned and running entirely on this Mac. "
-                    + "Select text anywhere, press one key, watch it improve in place.")
+            heading("You write. I'll handle the rest.",
+                    "Select text anywhere, press one key, and I rewrite it in place.")
             DemoView("rewrite") { RewriteDemo() }
+                .riseIn(0.1)
             HStack(spacing: 22) {
-                fact("lock.fill", "Nothing leaves\nthis Mac")
-                fact("bolt.fill", "About a second\nper rewrite")
-                fact("keyboard", "Works in\nevery app")
+                fact("lock.fill", "Your words never\nleave the building")
+                fact("bolt.fill", "About a second.\nGive or take.")
+                fact("keyboard", "Works wherever\nyou type")
             }
+            .riseIn(0.2)
             Spacer(minLength: 0)
         }
     }
@@ -365,20 +384,31 @@ struct OnboardingView: View {
     private var modelStep: some View {
         VStack(alignment: .leading, spacing: 22) {
             Spacer(minLength: 0)
-            heading(models.isReady ? "The model is ready." : "One download, then it's yours.",
+            heading(models.isReady ? "Suited up." : "One download, then we're in business.",
                     models.isReady
-                    ? "It lives on this Mac from here on. Nothing is fetched again, and nothing you write is ever uploaded."
-                    : "Stark runs a 1.7-billion-parameter model locally, so the weights have to live on your Mac. It is a one-time download of about 1.2 GB.")
+                    ? "Everything I need is on this Mac now. No re-downloads."
+                    : "I think locally, so about 1.2 GB has to live on your Mac.")
 
+            downloadCard
+                .riseIn(0.1)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: models.state)
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private var downloadCard: some View {
             switch models.state {
             case .ready:
                 statusCard(symbol: "checkmark.circle.fill", tint: .green,
-                           title: "Downloaded",
-                           detail: "Stored in Application Support · delete anytime")
+                           title: "Ready when you are",
+                           detail: "Sitting on your Mac · delete it whenever you like")
             case .downloading(let fraction, let received, let total):
                 VStack(alignment: .leading, spacing: 9) {
                     ProgressView(value: fraction)
                         .progressViewStyle(.linear)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.3),
+                                   value: fraction)
                     HStack {
                         Text("\(ModelStore.describe(received)) of \(ModelStore.describe(total))")
                             .font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -395,14 +425,12 @@ struct OnboardingView: View {
                     .stroke(.separator, lineWidth: 1))
             case .failed(let why):
                 statusCard(symbol: "exclamationmark.triangle.fill", tint: .orange,
-                           title: "Download failed", detail: why)
+                           title: "That one didn't land", detail: why)
             case .missing:
                 statusCard(symbol: "arrow.down.circle", tint: .secondary,
-                           title: "Not downloaded yet",
-                           detail: "About 1.2 GB · takes a few minutes on most connections")
+                           title: "Still in the box",
+                           detail: "About 1.2 GB · a few minutes, tops")
             }
-            Spacer(minLength: 0)
-        }
     }
 
     private func statusCard(symbol: String, tint: Color,
@@ -426,19 +454,17 @@ struct OnboardingView: View {
     private var access: some View {
         VStack(alignment: .leading, spacing: 22) {
             Spacer(minLength: 0)
-            heading("One permission, then you're done.",
-                    "To replace text where you wrote it, Stark copies your selection and "
-                    + "pastes the result back. macOS requires your permission for that. "
-                    + "Nothing is recorded, and nothing is sent anywhere.")
+            heading("One permission. Last bit of paperwork.",
+                    "macOS wants your say-so before I can type on your behalf.")
             HStack(spacing: 12) {
                 Image(systemName: m.trusted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .font(.system(size: 19))
                     .foregroundStyle(m.trusted ? Color.green : Color.orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(m.trusted ? "Accessibility granted" : "Accessibility not granted yet")
+                    Text(m.trusted ? "Cleared for takeoff" : "Still waiting on you")
                         .font(.system(size: 13, weight: .medium))
-                    Text(m.trusted ? "Everything below will work."
-                         : "Rewriting can't paste without it.")
+                    Text(m.trusted ? "We're good. Everything works."
+                         : "Without this I can think, but I can't type.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                 }
@@ -457,7 +483,7 @@ struct OnboardingView: View {
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(.separator, lineWidth: 1))
-            Text("Stark waits here until you switch it on — the tick turns green by itself.")
+            Text("Leave this open. The tick goes green by itself. I'm patient.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 0)
@@ -467,10 +493,10 @@ struct OnboardingView: View {
     private var tryIt: some View {
         VStack(alignment: .leading, spacing: 20) {
             Spacer(minLength: 0)
-            heading(m.charged ? "That ran on your Mac." : "Try it right here.",
+            heading(m.charged ? "That ran right here." : "Take it for a spin.",
                     m.charged
-                    ? "No account, no network, no waiting on a server. That is the whole product."
-                    : "Select the sentence below — ⌘A works — then press \(m.comboDisplay).")
+                    ? "No sign-up, no internet, nobody else's computer involved."
+                    : "Select the sentence below with ⌘A, then press \(m.comboDisplay).")
             VStack(alignment: .leading, spacing: 10) {
                 TextEditor(text: $m.playground)
                     .font(.system(size: 14))
@@ -482,6 +508,8 @@ struct OnboardingView: View {
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(m.charged ? Color.green : Color.accentColor.opacity(0.5),
                                 lineWidth: 1.5))
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.35),
+                               value: m.charged)
                     .onChange(of: m.playground) { _, new in
                         if !m.charged, new != Self.slop, !new.lowercased().contains("beleive"),
                            new.trimmingCharacters(in: .whitespacesAndNewlines).count > 10 {
@@ -492,11 +520,12 @@ struct OnboardingView: View {
                     Image(systemName: m.charged ? "checkmark.circle.fill" : "keyboard")
                         .font(.system(size: 11))
                         .foregroundStyle(m.charged ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
-                    Text(m.charged ? "Rewritten in place."
-                         : "Not working? Accessibility may still be off — go back a step.")
+                    Text(m.charged ? "Rewritten, in place. You're welcome."
+                         : "Nothing happening? I probably still need that permission. Go back a step.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(m.charged ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                 }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: m.charged)
             }
             Spacer(minLength: 0)
         }
@@ -505,12 +534,11 @@ struct OnboardingView: View {
     private var done: some View {
         VStack(alignment: .leading, spacing: 20) {
             Spacer(minLength: 0)
-            heading("You're set.",
-                    "Stark lives in the menu bar. Select text anywhere and press "
-                    + "\(m.comboDisplay) — that's the whole thing.")
+            heading("Good to go.",
+                    "I'll be in the menu bar. Select text, press \(m.comboDisplay), done.")
 
             HStack(spacing: 7) {
-                ForEach(Array(m.comboDisplay.enumerated()), id: \.offset) { _, ch in
+                ForEach(Array(m.comboDisplay.enumerated()), id: \.offset) { i, ch in
                     Text(String(ch))
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .frame(minWidth: 36, minHeight: 36)
@@ -518,6 +546,7 @@ struct OnboardingView: View {
                                     in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(.separator, lineWidth: 1))
+                        .riseIn(0.12 + 0.07 * Double(i))
                 }
                 Button(m.recording ? "Cancel" : "Change…") {
                     m.recording ? m.stopRecording() : m.startRecording(onHotkey: onHotkey)
@@ -535,16 +564,28 @@ struct OnboardingView: View {
             Divider().padding(.vertical, 2)
 
             // The two things worth knowing exist, each with its own demo. Both
-            // default off — they are the parts that watch what you type.
+            // are on: they are what makes Stark feel like more than a
+            // spellchecker, and left off by default most people never found
+            // them. The switches are here, and again in the menu bar.
             optionRow(demo: "predict", fallback: AnyView(PredictDemo()),
-                      title: "Predictive typing",
-                      detail: "Ghost-text suggestions as you write. Tab accepts.",
+                      title: "Finish my sentences",
+                      detail: "I'll grey in what I think comes next. Press Tab if I'm right.",
                       isOn: $m.completionOn)
             optionRow(demo: "aura", fallback: AnyView(AuraDemo()),
-                      title: "Aura",
-                      detail: "Learns your voice from rewrites you keep. Stays on this Mac.",
+                      title: "Aura learns how you write",
+                      detail: "Every rewrite you keep teaches me how you write. Stays on this Mac, obviously.",
                       isOn: $m.auraOn)
             Spacer(minLength: 0)
+        }
+        // Finishing setup is the one moment in the flow worth celebrating.
+        // Clipped to the content column: unclipped it rained over the sidebar
+        // and the footer buttons, which reads as a glitch rather than a party.
+        .overlay {
+            if !reduceMotion {
+                ConfettiView()
+                    .allowsHitTesting(false)
+                    .clipped()
+            }
         }
     }
 
@@ -573,6 +614,39 @@ struct OnboardingView: View {
 }
 
 
+// MARK: - Motion
+
+/// A fade-and-rise entrance, staggered by `delay`.
+///
+/// Everything used to snap into place the instant a step changed, which made
+/// the window feel like a slideshow. Content now settles in the order you read
+/// it. Skipped entirely under Reduce Motion, where the view starts visible.
+private struct RiseIn: ViewModifier {
+    /// Same reason as `OnboardingModel`: no `@State` without the macro plugin.
+    final class Phase: ObservableObject { @Published var shown = false }
+
+    @StateObject private var phase = Phase()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let delay: Double
+
+    func body(content: Content) -> some View {
+        let settled = reduceMotion || phase.shown
+        return content
+            .opacity(settled ? 1 : 0)
+            .offset(y: settled ? 0 : 9)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeOut(duration: 0.42).delay(delay)) { phase.shown = true }
+            }
+    }
+}
+
+extension View {
+    fileprivate func riseIn(_ delay: Double = 0) -> some View {
+        modifier(RiseIn(delay: delay))
+    }
+}
+
 // MARK: - Confetti
 
 /// A one-shot shower of bolts. Pure SwiftUI, skipped under Reduce Motion.
@@ -581,18 +655,25 @@ private struct ConfettiView: View {
     final class Phase: ObservableObject { @Published var fall = false }
 
     @StateObject private var phase = Phase()
-    private let pieces: [(x: CGFloat, delay: Double, spin: Double, size: CGFloat)] =
-        (0..<26).map { _ in (CGFloat.random(in: -360...360), .random(in: 0...0.5),
-                             .random(in: -260...260), .random(in: 14...26)) }
+    /// Fewer, smaller, and more transparent than the first attempt, which put
+    /// 26 full-size bolts across the text and made the last screen unreadable
+    /// for two seconds. A celebration should be noticed, not endured.
+    private let pieces: [(x: CGFloat, delay: Double, spin: Double,
+                          size: CGFloat, fade: Double)] =
+        (0..<14).map { _ in (CGFloat.random(in: -300...300), .random(in: 0...0.7),
+                             .random(in: -220...220), .random(in: 11...18),
+                             .random(in: 0.35...0.6)) }
 
     var body: some View {
         GeometryReader { geo in
             ForEach(Array(pieces.enumerated()), id: \.offset) { _, p in
                 Text("⚡")
                     .font(.system(size: p.size))
-                    .position(x: geo.size.width / 2 + p.x, y: phase.fall ? geo.size.height + 40 : -40)
+                    .opacity(p.fade)
+                    .position(x: geo.size.width / 2 + p.x,
+                              y: phase.fall ? geo.size.height + 40 : -40)
                     .rotationEffect(.degrees(phase.fall ? p.spin : 0))
-                    .animation(.easeIn(duration: 1.6).delay(p.delay), value: phase.fall)
+                    .animation(.easeIn(duration: 1.9).delay(p.delay), value: phase.fall)
             }
         }
         .onAppear { phase.fall = true }

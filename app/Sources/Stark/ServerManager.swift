@@ -18,7 +18,7 @@ final class ServerManager: ObservableObject {
             case .sleeping: return "sleeping (wakes on use)"
             case .starting: return "starting…"
             case .running: return "running"
-            case .failed(let msg): return "failed — \(msg)"
+            case .failed(let msg): return "failed. \(msg)"
             }
         }
     }

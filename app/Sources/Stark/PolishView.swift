@@ -95,13 +95,13 @@ struct PolishView: View {
         switch vm.state {
         case .empty:
             centred(icon: "text.cursor",
-                    title: "Nothing to rewrite",
+                    title: "Give me something to work with",
                     detail: "Select some text anywhere, then press \(hotkeyDisplay).")
 
         case .pickPreset:
             VStack(alignment: .leading, spacing: 10) {
                 if vm.suggestOrganize {
-                    Label("Looks like a list — press 6 for bullets", systemImage: "list.bullet")
+                    Label("Looks like a list. Press 6 for bullets", systemImage: "list.bullet")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -125,7 +125,7 @@ struct PolishView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
-                Text("Press \(hotkeyDisplay) to try again, or pick another style below.")
+                Text("Press \(hotkeyDisplay) to have another go, or pick a different style below.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -229,7 +229,7 @@ struct PolishView: View {
             case .pickPreset, .empty:
                 hint("1–8", "style")
             case .generating:
-                Text("Running on this Mac").font(.system(size: 10))
+                Text("All local. All yours.").font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             case .done:
                 hint("1–8", "another style")

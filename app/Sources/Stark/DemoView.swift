@@ -250,7 +250,7 @@ struct AuraDemo: View {
                     Image(systemName: "brain")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.accentColor)
-                    Text("Aura — learning your voice")
+                    Text("Aura, learning your voice")
                         .font(.system(size: 12, weight: .medium))
                 }
                 HStack(spacing: 6) {
