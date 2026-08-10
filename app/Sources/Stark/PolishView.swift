@@ -32,8 +32,8 @@ struct PolishView: View {
         HStack(spacing: 9) {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(LinearGradient(colors: [Color.accentColor,
-                                                  Color.accentColor.opacity(0.7)],
+                    .fill(LinearGradient(colors: [Color.brand,
+                                                  Color.brand.opacity(0.7)],
                                          startPoint: .topLeading,
                                          endPoint: .bottomTrailing))
                     .frame(width: 22, height: 22)
@@ -68,7 +68,7 @@ struct PolishView: View {
     private var source: some View {
         HStack(alignment: .top, spacing: 9) {
             Capsule()
-                .fill(Color.accentColor.opacity(0.45))
+                .fill(Color.brand.opacity(0.45))
                 .frame(width: 2.5)
             VStack(alignment: .leading, spacing: 3) {
                 Text(vm.inPlace ? "Selection" : "Clipboard")
@@ -103,7 +103,7 @@ struct PolishView: View {
                 if vm.suggestOrganize {
                     Label("Looks like a list. Press 6 for bullets", systemImage: "list.bullet")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.brand)
                 }
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
                                     GridItem(.flexible(), spacing: 8)], spacing: 8) {
@@ -141,10 +141,10 @@ struct PolishView: View {
                 if let p = vm.activePreset {
                     Image(systemName: p.icon)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.brand)
                     Text(p.name)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.brand)
                 }
                 Spacer()
                 if vm.state == .generating {
@@ -170,7 +170,7 @@ struct PolishView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(vm.state == .generating
-                        ? Color.accentColor.opacity(0.55)
+                        ? Color.brand.opacity(0.55)
                         : Color.secondary.opacity(0.18),
                         lineWidth: 1)
         )
@@ -199,7 +199,7 @@ struct PolishView: View {
             HStack(spacing: 8) {
                 Image(systemName: preset.icon)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.brand)
                     .frame(width: 16)
                 Text(preset.name)
                     .font(.system(size: 12))
@@ -268,7 +268,7 @@ private struct ThinkingDots: View {
         HStack(spacing: 3) {
             ForEach(0..<3, id: \.self) { i in
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(Color.brand)
                     .frame(width: 4, height: 4)
                     .opacity(phase.on ? 1 : 0.25)
                     .animation(.easeInOut(duration: 0.55).repeatForever()

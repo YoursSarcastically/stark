@@ -15,6 +15,11 @@ final class OnboardingController: NSObject, NSWindowDelegate {
                          styleMask: [.titled, .closable, .fullSizeContentView],
                          backing: .buffered, defer: false)
         w.title = "Welcome to Stark"
+        // Deliberately still opaque. A fully transparent window with
+        // `.underWindowBackground` let whatever was behind it read straight
+        // through the text — Mail and System Settings put vibrancy in the
+        // sidebar and keep the content pane solid, and so does this.
+        w.isMovableByWindowBackground = true
         // Onboarding is always light. The demo artwork is a fixed light palette,
         // and a window that flips with the system theme would leave the
         // animations sitting on the wrong background half the time.
@@ -195,7 +200,10 @@ struct OnboardingView: View {
             }
         }
         .frame(minWidth: 820, minHeight: 560)
-        .background(.background)
+        // Flat white, for the same reason the sidebar is flat: a behind-window
+        // material tinted the whole pane with whatever wallpaper was behind it.
+        // White content against the grey rail is the standard Mac pairing.
+        .background(Color(nsColor: .textBackgroundColor))
         .onReceive(timer) { _ in m.trusted = InPlace.trusted }
         .onAppear { m.comboDisplay = hotkeyDisplay }
     }
@@ -207,58 +215,101 @@ struct OnboardingView: View {
     /// access" reads as a task while a dot reads as a countdown.
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        LinearGradient(colors: [Color.accentColor,
-                                                Color.accentColor.opacity(0.75)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                Text("Stark").font(.system(size: 15, weight: .semibold))
+            HStack(spacing: 9) {
+                // The mark itself, not a bolt in a coloured tile. bolt.circle
+                // is the same drawing as assets/icon.png.
+                Image(systemName: "bolt.circle")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(Color.ink)
+                Text("Stark").font(.system(size: 14, weight: .semibold))
             }
-            .padding(.bottom, 30)
+            .padding(.bottom, 26)
 
-            ForEach(Step.allCases, id: \.rawValue) { s in
-                stepRow(s)
+            // Rows sit on a single continuous rail, so the list reads as one
+            // journey with a position on it rather than five loose bullets.
+            ZStack(alignment: .topLeading) {
+                Capsule()
+                    .fill(.quaternary)
+                    .frame(width: 1.5, height: CGFloat(Step.allCases.count - 1) * 34)
+                    .padding(.leading, 8.25)
+                    .padding(.top, 17)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Step.allCases, id: \.rawValue) { s in
+                        stepRow(s)
+                    }
+                }
             }
+
             Spacer()
+
+            // The sidebar used to be two thirds empty. This is the one promise
+            // worth repeating while the user is still deciding to trust it.
+            HStack(spacing: 7) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                Text("Everything stays\non this Mac")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.bottom, 16)
+
             credit
         }
-        .padding(24)
-        .frame(width: 216, alignment: .leading)
-        .background(.quaternary.opacity(0.22))
+        .padding(22)
+        .frame(width: 208, alignment: .leading)
+        // `.sidebar` samples the desktop behind the window, so the rail took on
+        // whatever colour the wallpaper happened to be — on a warm wallpaper it
+        // came out muddy beige. A flat, slightly recessed panel is what Apple's
+        // own setup assistants use, and it looks the same on every Mac.
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .topLeading) {
+            LinearGradient(colors: [Color.brand.opacity(0.05), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .allowsHitTesting(false)
+        }
     }
 
     private func stepRow(_ s: Step) -> some View {
         let done = s.rawValue < m.step
         let current = s == step
-        return HStack(spacing: 10) {
+        return HStack(spacing: 11) {
+            // Only the step you are on is filled. Solid colour on every
+            // finished step turned the rail into a column of dots, which is
+            // most of what made the window look cheap.
             ZStack {
-                Circle()
-                    .fill(done ? Color.accentColor
-                          : (current ? Color.accentColor.opacity(0.16) : Color.clear))
-                    .frame(width: 20, height: 20)
-                if !done, !current {
-                    Circle().stroke(.tertiary, lineWidth: 1).frame(width: 20, height: 20)
-                }
+                // Opaque, so the rail passes behind the markers rather than
+                // through them.
+                Circle().fill(Color(nsColor: .windowBackgroundColor))
+                    .frame(width: 17, height: 17)
                 if done {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.brand.opacity(0.55))
                 } else if current {
-                    Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                    Circle().fill(Color.brand).frame(width: 15, height: 15)
+                    Circle().fill(.white).frame(width: 5, height: 5)
+                } else {
+                    Circle().strokeBorder(.quaternary, lineWidth: 1.2)
+                        .frame(width: 15, height: 15)
                 }
             }
+            .frame(width: 17, height: 17)
             Text(title(s))
                 .font(.system(size: 12.5, weight: current ? .semibold : .regular))
-                .foregroundStyle(current ? AnyShapeStyle(.primary)
+                .foregroundStyle(current ? AnyShapeStyle(Color.ink)
                                  : (done ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)))
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 8.5)
+        .padding(.horizontal, 8)
+        .padding(.leading, -8)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(current ? Color.brand.opacity(0.09) : .clear)
+                .padding(.leading, -8)
+                .padding(.trailing, -6))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: m.step)
     }
 
@@ -278,6 +329,7 @@ struct OnboardingView: View {
             Link("Suraj Sharma",
                  destination: URL(string: "https://www.linkedin.com/in/surajsharma97/")!)
                 .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.brand)
         }
     }
 
@@ -293,6 +345,7 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 18)
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
         }
     }
 
@@ -307,8 +360,10 @@ struct OnboardingView: View {
             if models.isReady {
                 primary("Continue") { m.step += 1 }
             } else if case .downloading = models.state {
-                Button("Downloading…") {}.buttonStyle(.borderedProminent)
-                    .controlSize(.large).disabled(true)
+                Button("Downloading…") {}
+                    .buttonStyle(GlassButton())
+                    .disabled(true)
+                    .opacity(0.6)
             } else {
                 primary("Download · 1.2 GB") { models.start() }
             }
@@ -355,6 +410,8 @@ struct OnboardingView: View {
             heading("You write. I'll handle the rest.",
                     "Select text anywhere, press one key, and I rewrite it in place.")
             DemoView("rewrite") { RewriteDemo() }
+                .padding(9)
+                .glassCard(radius: 16)
                 .riseIn(0.1)
             HStack(spacing: 22) {
                 fact("lock.fill", "Your words never\nleave the building")
@@ -370,7 +427,7 @@ struct OnboardingView: View {
         HStack(spacing: 9) {
             Image(systemName: symbol)
                 .font(.system(size: 13))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.ink.opacity(0.75))
                 .frame(width: 18)
             Text(text)
                 .font(.system(size: 11.5))
@@ -419,10 +476,7 @@ struct OnboardingView: View {
                     }
                 }
                 .padding(16)
-                .background(.quaternary.opacity(0.4),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.separator, lineWidth: 1))
+                .glassCard()
             case .failed(let why):
                 statusCard(symbol: "exclamationmark.triangle.fill", tint: .orange,
                            title: "That one didn't land", detail: why)
@@ -445,10 +499,7 @@ struct OnboardingView: View {
             Spacer(minLength: 0)
         }
         .padding(16)
-        .background(.quaternary.opacity(0.4),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .stroke(.separator, lineWidth: 1))
+        .glassCard()
     }
 
     private var access: some View {
@@ -479,10 +530,7 @@ struct OnboardingView: View {
                 }
             }
             .padding(16)
-            .background(.quaternary.opacity(0.4),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.separator, lineWidth: 1))
+            .glassCard()
             Text("Leave this open. The tick goes green by itself. I'm patient.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.tertiary)
@@ -503,11 +551,13 @@ struct OnboardingView: View {
                     .scrollContentBackground(.hidden)
                     .frame(height: 78)
                     .padding(12)
-                    .background(.quaternary.opacity(0.35),
+                    .background(.regularMaterial,
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(m.charged ? Color.green : Color.accentColor.opacity(0.5),
-                                lineWidth: 1.5))
+                        .strokeBorder(m.charged ? Color.green.opacity(0.75)
+                                      : Color.brand.opacity(0.45),
+                                      lineWidth: 1.2))
+                    .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.35),
                                value: m.charged)
                     .onChange(of: m.playground) { _, new in
@@ -542,10 +592,11 @@ struct OnboardingView: View {
                     Text(String(ch))
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .frame(minWidth: 36, minHeight: 36)
-                        .background(.quaternary.opacity(0.5),
+                        .background(.regularMaterial,
                                     in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(.separator, lineWidth: 1))
+                            .strokeBorder(.white.opacity(0.5), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
                         .riseIn(0.12 + 0.07 * Double(i))
                 }
                 Button(m.recording ? "Cancel" : "Change…") {
@@ -553,7 +604,7 @@ struct OnboardingView: View {
                 }
                 .padding(.leading, 6)
                 if m.recording {
-                    Text("press keys…").font(.system(size: 11)).foregroundStyle(Color.accentColor)
+                    Text("press keys…").font(.system(size: 11)).foregroundStyle(Color.brand)
                 }
             }
             if let warning = m.keyWarning {
@@ -607,8 +658,7 @@ struct OnboardingView: View {
 
     private func primary(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Text(title).frame(minWidth: 76) }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(GlassButton())
             .keyboardShortcut(.defaultAction)
     }
 }

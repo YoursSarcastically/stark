@@ -8,6 +8,14 @@ swift build -c release
 APP=build/Stark.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+# The app icon, drawn by tools/make_icon.py. Regenerate with:
+#   python tools/make_icon.py
+if [ -f Stark.icns ]; then
+  cp Stark.icns "$APP/Contents/Resources/Stark.icns"
+else
+  echo "  no Stark.icns — run tools/make_icon.py"
+fi
 cp .build/release/Stark "$APP/Contents/MacOS/Stark"
 
 # The inference engine. Binary and dylibs must land in one directory: the
@@ -59,6 +67,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundleDisplayName</key><string>Stark</string>
   <key>CFBundleIdentifier</key><string>com.local.stark</string>
   <key>CFBundleExecutable</key><string>Stark</string>
+  <key>CFBundleIconFile</key><string>Stark</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>

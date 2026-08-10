@@ -35,7 +35,7 @@ STROKE = (223, 223, 227)
 TEXT = (28, 28, 30)
 DIM = (110, 110, 118)
 FAINT = (150, 150, 158)
-ACCENT = (235, 120, 20)      # the app's amber, darkened to hold on white
+ACCENT = (89, 87, 214)       # indigo, the app's one accent
 KEY_IDLE = (226, 226, 231)
 
 SF = "/System/Library/Fonts/SFNS.ttf"

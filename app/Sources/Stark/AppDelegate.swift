@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var auraTrainItem: NSMenuItem?
     private var auraTraining = false
     private var onboarding: OnboardingController?
+    private var auraMenuItem: NSMenuItem?
     private var bag = Set<AnyCancellable>()
 
     private var config = Config.load()
@@ -24,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle.fill",
+        statusItem.button?.image = NSImage(systemSymbolName: "bolt.circle",
                                            accessibilityDescription: "Stark")
         buildMenu()
 
@@ -76,7 +77,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Upgrade to the event tap when Accessibility is already granted; the
         // Carbon path alone has proven unreliable for LSUIElement apps.
         center.startTapIfPossible()
-        if config.completion { completion.start() }
+        // Not while setup is open. With predictive typing on by default the
+        // keystroke tap went live over the setup window itself, put ghost text
+        // on top of it, and drove the flow through all five steps on its own
+        // before the user had read the first one.
+        if config.completion, config.onboarded { completion.start() }
     }
 
     /// Called by onboarding when the user records a new combo.
@@ -102,6 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config.onboarded = true
         config.save()
         onboarding = nil
+        // Held back during setup; this is the moment it is wanted.
+        if config.completion, !completion.isEnabled, InPlace.trusted {
+            _ = completion.start()
+        }
     }
 
     private func showOnboarding() {
@@ -134,17 +143,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshAccessibilityItem() {
         guard let it = accessibilityMenuItem else { return }
         let ok = InPlace.trusted
-        it.title = ok ? "Permission: granted" : "Permission: still needed. Fix…"
+        // Granted is the normal state and needs no row. Missing is the one
+        // failure worth interrupting the menu for.
+        it.isHidden = ok
         it.isEnabled = !ok
-        let symbol = ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-        let colour: NSColor = ok ? .systemGreen : .systemOrange
-        it.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(paletteColors: [colour]))
+        it.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                           accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(paletteColors: [.systemOrange]))
     }
 
-    /// Ghost-text suggestions as you type. Off by default: it needs
-    /// Accessibility, watches every keystroke, and is the more experimental half
-    /// of Stark — the user should opt in knowingly.
+    /// Suggestions that finish your sentence as you type.
     @objc private func toggleCompletion() {
         if completion.isEnabled {
             completion.stop()
@@ -162,9 +170,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshCompletionItem() {
-        guard let it = completionMenuItem else { return }
-        it.state = completion.isEnabled ? .on : .off
-        it.title = completion.isEnabled ? "Predictive Typing" : "Predictive Typing (off)"
+        completionMenuItem?.state = completion.isEnabled ? .on : .off
+    }
+
+    /// Aura carries a submenu, so clicking the parent row toggles it and the
+    /// tick reflects the state — the same gesture as Finish My Sentences.
+    @objc private func toggleAura() {
+        config.aura.toggle()
+        config.save()
+        panel.update(config: config)
+        auraMenuItem?.state = config.aura ? .on : .off
     }
 
     @objc private func openAccessibilitySettings() {
@@ -185,11 +200,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return it
     }
 
+    /// Six rows and a Quit.
+    ///
+    /// This menu had fourteen items under three section headers, which meant
+    /// every glance cost a read. The things people actually click — rewrite,
+    /// undo, the two toggles — are now top level; the maintenance (styles,
+    /// permission, restart, setup) is one level down under Settings, where it
+    /// does not compete. The permission row is the exception: it appears at the
+    /// top level only when it is missing, because a silent Accessibility
+    /// failure is the most confusing way for Stark to break.
     private func buildMenu() {
         let menu = NSMenu()
         menu.autoenablesItems = false // enabled states managed in menuWillOpen
-
-        menu.addItem(.sectionHeader(title: "Rewrite"))
 
         let rewrite = item("Rewrite Selection", symbol: "wand.and.stars",
                            action: #selector(openPanel))
@@ -209,6 +231,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(presetsItem)
         menu.setSubmenu(presetsMenu, for: presetsItem)
 
+        // Both of these are about the rewrite that just happened, so they live
+        // together rather than taking two rows of their own.
+        let lastMenu = NSMenu()
+        let undo = NSMenuItem(title: "Undo", action: #selector(undoRewrite),
+                              keyEquivalent: "")
+        undo.target = self
+        lastMenu.addItem(undo)
+        undoMenuItem = undo
+        let copyOriginal = NSMenuItem(title: "Copy the Original",
+                                      action: #selector(copyOriginal(_:)), keyEquivalent: "")
+        copyOriginal.target = self
+        lastMenu.addItem(copyOriginal)
+        let lastItem = item("Last Rewrite", symbol: "arrow.uturn.backward", action: nil)
+        menu.addItem(lastItem)
+        menu.setSubmenu(lastMenu, for: lastItem)
+
+        menu.addItem(.separator())
+
+        let predict = item("Finish My Sentences", symbol: "text.cursor",
+                           action: #selector(toggleCompletion))
+        menu.addItem(predict)
+        completionMenuItem = predict
+
+        // Aura's own controls sit under Aura rather than in a section of their
+        // own; the submenu opens with the state, so the count is one hover away.
+        let auraMenu = NSMenu()
+        let auraStatus = NSMenuItem(title: "Aura: off", action: nil, keyEquivalent: "")
+        auraStatus.isEnabled = false
+        auraMenu.addItem(auraStatus)
+        auraStatusItem = auraStatus
+        auraMenu.addItem(.separator())
+        let train = NSMenuItem(title: "Update My Style Now",
+                               action: #selector(trainAura), keyEquivalent: "")
+        train.target = self
+        auraMenu.addItem(train)
+        auraTrainItem = train
+        let forget = NSMenuItem(title: "Forget What It Learned",
+                                action: #selector(forgetAura), keyEquivalent: "")
+        forget.target = self
+        auraMenu.addItem(forget)
+        let auraItem = item("Aura", symbol: "brain", action: #selector(toggleAura))
+        menu.addItem(auraItem)
+        menu.setSubmenu(auraMenu, for: auraItem)
+        auraMenuItem = auraItem
+
+        menu.addItem(.separator())
+
+        // Present only while something is wrong, so a healthy menu stays short.
+        let access = item("Grant Permission…", symbol: "exclamationmark.triangle.fill",
+                          action: #selector(openAccessibilitySettings))
+        menu.addItem(access)
+        accessibilityMenuItem = access
+
+        let settingsMenu = NSMenu()
+        let status = NSMenuItem(title: "Stark: starting…", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        settingsMenu.addItem(status)
+        serverStatusMenuItem = status
+        settingsMenu.addItem(.separator())
+
         // Which style the one-press in-place rewrite uses (config `preset`).
         let styleMenu = NSMenu()
         for (i, preset) in Presets.all.enumerated() {
@@ -219,54 +301,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.state = preset.tag == config.preset ? .on : .off
             styleMenu.addItem(item)
         }
-        let styleItem = item("Default Style", symbol: "text.badge.star", action: nil)
-        menu.addItem(styleItem)
-        menu.setSubmenu(styleMenu, for: styleItem)
+        let styleItem = NSMenuItem(title: "Default Style", action: nil, keyEquivalent: "")
+        settingsMenu.addItem(styleItem)
+        settingsMenu.setSubmenu(styleMenu, for: styleItem)
         defaultStyleMenu = styleMenu
 
-        let undo = item("Undo Last Rewrite", symbol: "arrow.uturn.backward",
-                        action: #selector(undoRewrite))
-        menu.addItem(undo)
-        undoMenuItem = undo
+        let restart = NSMenuItem(title: "Restart Stark", action: #selector(restartServer),
+                                 keyEquivalent: "")
+        restart.target = self
+        settingsMenu.addItem(restart)
+        let setup = NSMenuItem(title: "Run Setup…", action: #selector(runSetup),
+                               keyEquivalent: "")
+        setup.target = self
+        settingsMenu.addItem(setup)
 
-        menu.addItem(item("Copy Original of Last Rewrite", symbol: "doc.on.doc",
-                          action: #selector(copyOriginal(_:))))
-
-        let predict = item("Finish My Sentences", symbol: "text.cursor",
-                           action: #selector(toggleCompletion))
-        menu.addItem(predict)
-        completionMenuItem = predict
-
-        menu.addItem(.sectionHeader(title: "Learning Your Style"))
-
-        let auraStatus = NSMenuItem(title: "Aura: off", action: nil, keyEquivalent: "")
-        auraStatus.isEnabled = false
-        menu.addItem(auraStatus)
-        auraStatusItem = auraStatus
-
-        let train = item("Update My Style Now", symbol: "brain", action: #selector(trainAura))
-        menu.addItem(train)
-        auraTrainItem = train
-
-        menu.addItem(item("Forget What It Learned", symbol: "trash", action: #selector(forgetAura)))
-
-        menu.addItem(.sectionHeader(title: "Status"))
-
-        let status = NSMenuItem(title: "Stark: starting…", action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-        serverStatusMenuItem = status
-
-        // Silent Accessibility failure is the single most confusing way for Stark
-        // to break, so its state is always visible and one click from fixing.
-        let access = item("Permission", symbol: "hand.raised",
-                          action: #selector(openAccessibilitySettings))
-        menu.addItem(access)
-        accessibilityMenuItem = access
-
-        menu.addItem(item("Restart Stark", symbol: "arrow.clockwise",
-                          action: #selector(restartServer)))
-        menu.addItem(item("Run Setup…", symbol: "sparkles", action: #selector(runSetup)))
+        let settingsItem = item("Settings", symbol: "gearshape", action: nil)
+        menu.addItem(settingsItem)
+        menu.setSubmenu(settingsMenu, for: settingsItem)
 
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Stark",
@@ -316,7 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func trainAura() {
         guard !auraTraining else { return }
         auraTraining = true
-        auraStatusItem?.title = "Aura: studying your style… (a few minutes)"
+        auraStatusItem?.title = "Studying your style… (a few minutes)"
         let python = config.pythonPath
         let script = URL(fileURLWithPath: config.modelPath).deletingLastPathComponent()
             .appendingPathComponent("aura_train.py").path
@@ -338,8 +389,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.auraTraining = false
                 self.auraStatusItem?.title = succeeded
-                    ? "Aura: caught up ✓"
-                    : "Aura: training failed (~/.stark/aura/train.log)"
+                    ? "Caught up ✓"
+                    : "Training failed (~/.stark/aura/train.log)"
                 if succeeded { self.server.restart() }
             }
         }
@@ -356,13 +407,14 @@ extension AppDelegate: NSMenuDelegate {
             undoMenuItem?.isEnabled = panel.canUndo
             refreshAccessibilityItem()
             refreshCompletionItem()
+            auraMenuItem?.state = config.aura ? .on : .off
             guard !auraTraining else { return }
             if config.aura {
                 let n = AuraStore.shared.count()
-                auraStatusItem?.title = "Aura: on · \(n) rewrite\(n == 1 ? "" : "s") kept"
+                auraStatusItem?.title = "On · \(n) rewrite\(n == 1 ? "" : "s") kept"
                 auraTrainItem?.isEnabled = n >= 8
             } else {
-                auraStatusItem?.title = "Aura: off"
+                auraStatusItem?.title = "Off"
                 auraTrainItem?.isEnabled = false
             }
         }

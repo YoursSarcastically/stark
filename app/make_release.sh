@@ -16,9 +16,9 @@
 #      right-click → Open, or run:  xattr -dr com.apple.quarantine /Applications/Stark.app
 #      Fine for a "for developers" link; not fine for a general audience.
 #
-# NOTE: this packages the APP ONLY. See DISTRIBUTION.md — the app still needs a
-# Python with mlx-lm and an 850 MB model on the user's machine, so this DMG is
-# not yet a working download for a non-technical user.
+# The DMG is self-contained: llama.cpp and the model weights are inside the
+# bundle, so there is nothing to install alongside it and no Python involved.
+# Drag to Applications and it runs.
 set -euo pipefail
 cd "$(dirname "$0")"
 

@@ -249,7 +249,7 @@ struct AuraDemo: View {
                 HStack(spacing: 8) {
                     Image(systemName: "brain")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Color.brand)
                     Text("Aura, learning your voice")
                         .font(.system(size: 12, weight: .medium))
                 }
@@ -321,7 +321,7 @@ private struct KeyCap: View {
         Text(label)
             .font(.system(size: 10, weight: .medium))
             .frame(width: wide ? 30 : 20, height: 18)
-            .background(pressed ? Color.accentColor : Color.secondary.opacity(0.18),
+            .background(pressed ? Color.brand : Color.secondary.opacity(0.18),
                         in: RoundedRectangle(cornerRadius: 5, style: .continuous))
             .foregroundStyle(pressed ? .white : .secondary)
             .animation(.easeOut(duration: 0.12), value: pressed)
