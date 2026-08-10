@@ -45,7 +45,7 @@ fi
 echo "  mlx-lm $("$VENV/bin/python" -c 'import mlx_lm; print(mlx_lm.__version__)' 2>/dev/null)"
 
 # --- 3. Model --------------------------------------------------------------
-MODEL_REPO="${STARK_MODEL_REPO:-suraj10620/stark-1.5b}"
+MODEL_REPO="${STARK_MODEL_REPO:-suraj10620/stark-1.7b}"
 MODEL_DIR="$HERE/model/$(basename "$MODEL_REPO")"
 if [ ! -f "$MODEL_DIR/config.json" ]; then
     say "Downloading the model (~900 MB, one time)…"

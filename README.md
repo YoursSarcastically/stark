@@ -6,7 +6,7 @@
     <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-0d1120">
     <img alt="Swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white">
     <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-ffc431">
-    <a href="https://huggingface.co/suraj10620/stark-1.5b"><img alt="Model on Hugging Face" src="https://img.shields.io/badge/🤗%20model-stark--1.5b-ffd21e"></a>
+    <a href="https://huggingface.co/suraj10620/stark-1.7b"><img alt="Model on Hugging Face" src="https://img.shields.io/badge/🤗%20model-stark--1.7b-ffd21e"></a>
   </p>
 </div>
 
@@ -161,7 +161,7 @@ flowchart LR
 ```
 
 The trained weights aren't in this repo. Either download the fused model from
-[Hugging Face](https://huggingface.co/suraj10620/stark-1.5b) into
+[Hugging Face](https://huggingface.co/suraj10620/stark-1.7b) into
 `model/stark-1.5b/`, or reproduce it locally (the dataset generator is seeded,
 so you get the same data):
 
