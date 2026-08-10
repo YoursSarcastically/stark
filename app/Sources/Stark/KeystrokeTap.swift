@@ -185,18 +185,27 @@ enum TextTyper {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let vKeyV: CGKeyCode = 0x09
-        for keyDown in [true, false] {
-            guard let e = CGEvent(keyboardEventSource: source,
-                                  virtualKey: vKeyV, keyDown: keyDown) else { continue }
-            e.flags = .maskCommand
-            e.setIntegerValueField(.eventSourceUserData, value: KeystrokeTap.injectedMarker)
-            e.post(tap: .cghidEventTap)
+        // Give the pasteboard a moment to settle before the keystroke — posting
+        // Cmd-V in the same runloop turn as setString means some apps read the
+        // pasteboard before the new contents have landed and paste the OLD
+        // clipboard, which looks exactly like "Tab does nothing".
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            let vKeyV: CGKeyCode = 0x09
+            for keyDown in [true, false] {
+                guard let e = CGEvent(keyboardEventSource: source,
+                                      virtualKey: vKeyV, keyDown: keyDown) else { continue }
+                e.flags = .maskCommand
+                e.setIntegerValueField(.eventSourceUserData,
+                                       value: KeystrokeTap.injectedMarker)
+                e.post(tap: .cghidEventTap)
+            }
         }
 
-        // Restore once the paste has certainly been read.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        // Restore once the paste has certainly been read. Long enough that a
+        // slow Electron app has finished reading the pasteboard, short enough
+        // that the user's clipboard is only briefly borrowed.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             pb.clearContents()
             for item in saved {
                 let entry = NSPasteboardItem()

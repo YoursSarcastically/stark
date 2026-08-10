@@ -99,7 +99,6 @@ final class CompletionEngine {
             switch which {
             case .accept:
                 completionLog.info("tab accept: \(self.suggestion, privacy: .public)")
-                self.overlay.flashAccept()
                 self.acceptAll()
             case .dismiss:
                 // Rule 4: Escape dismisses for the rest of this field, not just
@@ -303,8 +302,6 @@ final class CompletionEngine {
         guard enabled, !suppressed, let (prefix, element) = context() else { return }
         guard prefix != suggestedFor else { return }
 
-        overlay.showThinking(caret: element.flatMap { AXBridge.caretRect(of: $0) },
-                             field: element.flatMap { AXBridge.elementFrame(of: $0) })
 
         pending = Task { [weak self] in
             guard let self else { return }
@@ -363,9 +360,15 @@ final class CompletionEngine {
         // At the caret where the app reports it, so the pill grows out of the
         // cursor. Apps that won't report caret geometry (Docs, much of Electron)
         // fall back to a fixed position low in the window.
-        overlay.showSuggestion(text,
-                               caret: element.flatMap { AXBridge.caretRect(of: $0) },
-                               field: element.flatMap { AXBridge.elementFrame(of: $0) })
+        // Inline at the caret, in the field's own font, so the ghost text sits
+        // exactly where the next word would be typed.
+        let caret = element.flatMap { AXBridge.caretRect(of: $0) }
+        let font = element.flatMap { el in
+            AXBridge.caretOffset(of: el).flatMap { AXBridge.fontAtCaret(of: el, caret: $0) }
+        }
+        overlay.show(text, caret: caret,
+                     field: element.flatMap { AXBridge.elementFrame(of: $0) },
+                     font: font)
     }
 
     /// A fixed position over the focused window rather than a caret- or
