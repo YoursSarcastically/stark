@@ -14,7 +14,6 @@
 # Override the source with STARK_DMG_URL=... to install from your own host.
 set -euo pipefail
 
-REPO="${STARK_REPO:-YoursSarcastically/stark}"
 say()  { printf "\n\033[1m%s\033[0m\n" "$1"; }
 fail() { printf "\n\033[31m%s\033[0m\n" "$1" >&2; exit 1; }
 
@@ -33,15 +32,11 @@ echo "  macOS $(sw_vers -productVersion) · Apple silicon · ${RAM_GB} GB RAM ·
 [ "$FREE_GB" -ge 4 ] || fail "Need about 4 GB free, you have ${FREE_GB} GB."
 
 # --- 2. Fetch ---------------------------------------------------------------
-if [ -n "${STARK_DMG_URL:-}" ]; then
-    URL="$STARK_DMG_URL"
-else
-    say "Finding the latest release…"
-    URL="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-           | grep -o '"browser_download_url": *"[^"]*\.dmg"' \
-           | head -1 | sed 's/.*": *"//; s/"$//')"
-    [ -n "$URL" ] || fail "No .dmg in the latest release of $REPO. Set STARK_DMG_URL to install from elsewhere."
-fi
+# Hugging Face rather than GitHub Releases: the model already lives there, so
+# the app and its weights come from one host, and publishing a build needs no
+# token beyond the one that pushes the model.
+DMG_URL_DEFAULT="https://huggingface.co/suraj10620/stark-1.7b-gguf/resolve/main/Stark.dmg"
+URL="${STARK_DMG_URL:-$DMG_URL_DEFAULT}"
 
 TMP="$(mktemp -d)"
 # Leave nothing behind, including on a failure or a Ctrl-C partway through.
@@ -83,7 +78,53 @@ fi
 # Clearing it here is the same thing right-click → Open does, minus the dialog.
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
-# --- 4. Go ------------------------------------------------------------------
+# --- 4. The model -----------------------------------------------------------
+# Fetched here rather than left to the app's first run. Someone who installed
+# from a terminal expects to end up with a working app, not with a 1.2 GB
+# download still ahead of them. The app looks in exactly this place, so if it
+# is already here setup skips the step entirely.
+MODEL_DIR="$HOME/Library/Application Support/Stark"
+MODEL_NAME="stark-1.7b-Q5_K_M.gguf"
+MODEL_PATH="$MODEL_DIR/$MODEL_NAME"
+MODEL_BYTES=1257879776
+MODEL_SHA=7a2af84dd97030b660bcf6ae2d7ec11d0b43c3f5cdb204b2d2eea0663c7697b8
+MODEL_URL="${STARK_MODEL_URL:-https://huggingface.co/suraj10620/stark-1.7b-gguf/resolve/main/$MODEL_NAME}"
+
+mkdir -p "$MODEL_DIR"
+have_model() {
+    [ -f "$MODEL_PATH" ] && [ "$(stat -f%z "$MODEL_PATH" 2>/dev/null || echo 0)" -eq "$MODEL_BYTES" ]
+}
+
+if have_model; then
+    say "Model already downloaded."
+else
+    say "Downloading the model (1.2 GB, one time)…"
+    echo "  This is the whole product — it runs on your Mac, so it has to live here."
+    # -C - resumes a partial file, so a dropped connection costs only what was
+    # left rather than the whole 1.2 GB.
+    if ! curl -fL -C - --progress-bar "$MODEL_URL" -o "$MODEL_PATH"; then
+        echo "  Download interrupted. Run this installer again to pick up where it stopped."
+        echo "  Stark will also offer to finish it from the setup window."
+        MODEL_INCOMPLETE=1
+    fi
+fi
+
+if have_model; then
+    say "Checking the download…"
+    # A truncated or corrupt GGUF does not fail loudly: llama-server exits with
+    # a parse error that means nothing to the person who sees it.
+    GOT="$(shasum -a 256 "$MODEL_PATH" | cut -d' ' -f1)"
+    if [ "$GOT" = "$MODEL_SHA" ]; then
+        # Recording it here saves the app hashing 1.2 GB again on first launch.
+        printf '%s' "$MODEL_SHA" > "$MODEL_DIR/.$MODEL_NAME.verified"
+        echo "  Verified."
+    else
+        rm -f "$MODEL_PATH" "$MODEL_DIR/.$MODEL_NAME.verified"
+        fail "The model arrived damaged and has been deleted. Run the installer again."
+    fi
+fi
+
+# --- 5. Go ------------------------------------------------------------------
 say "Starting Stark…"
 open "$DEST"
 
@@ -91,14 +132,15 @@ cat <<'EOF'
 
   Stark is in your menu bar, top right.
 
-  Setup opens by itself and walks you through three things:
+  Setup opens by itself. One thing still needs you:
 
-    1. Downloading the model — about 1.2 GB, once. It lives in
-       ~/Library/Application Support/Stark and survives app updates.
-    2. Granting permission — System Settings → Privacy & Security →
-       Accessibility. Stark needs it to replace text where you wrote it.
-    3. A first rewrite, so you can see it work.
+    Granting permission — System Settings → Privacy & Security →
+    Accessibility. Stark needs it to replace text where you wrote it.
 
-  After that: select text anywhere, press ⌘D.
+  Then: select text anywhere, press ⌘D.
 
 EOF
+
+if [ -n "${MODEL_INCOMPLETE:-}" ]; then
+    printf "  \033[33mThe model download did not finish — setup will offer to resume it.\033[0m\n\n"
+fi
