@@ -11,9 +11,9 @@ struct HotKeySpec {
     let modifiers: UInt32
     let display: String
 
-    static let fallback = HotKeySpec(keyCode: UInt32(kVK_ANSI_S),
-                                     modifiers: UInt32(controlKey | optionKey),
-                                     display: "⌃⌥S")
+    static let fallback = HotKeySpec(keyCode: UInt32(kVK_ANSI_D),
+                                     modifiers: UInt32(cmdKey),
+                                     display: "⌘D")
 
     /// Accepts modifiers cmd/command, ctrl/control, alt/opt/option, shift
     /// plus one letter or digit key; at least one modifier is required.

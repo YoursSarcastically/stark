@@ -12,7 +12,7 @@ struct Config: Codable {
     var adapterPath: String = "" // only needed when serving an unfused base
     var maxTokens: Int = 4096 // headroom for multi-page rewrites
     var temperature: Double = 0.2
-    var hotkey: String = "ctrl+alt+s"
+    var hotkey: String = "cmd+d"
     var preset: String = "polish" // style for one-shot rewrites outside personas
     /// Frontmost-app bundle id → style tags applied in order.
     var personas: [String: [String]] = Config.defaultPersonas

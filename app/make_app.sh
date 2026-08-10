@@ -36,6 +36,14 @@ else
   echo "  no model bundled — the app will look for one in ~/.stark/config.json"
 fi
 
+# Onboarding demo animations. Regenerate with tools/make_demos.py; the app
+# falls back to live SwiftUI reconstructions when they are absent.
+if compgen -G "Demos/*.gif" > /dev/null; then
+  mkdir -p "$APP/Contents/Resources/demos"
+  cp Demos/*.gif "$APP/Contents/Resources/demos/"
+  echo "  bundled $(ls Demos/*.gif | wc -l | tr -d ' ') demo animations"
+fi
+
 # Onboarding backgrounds (optional; gradients are the fallback)
 if compgen -G "Backgrounds/*.jpg" > /dev/null; then
   mkdir -p "$APP/Contents/Resources/backgrounds"

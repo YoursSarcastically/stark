@@ -53,11 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.register(spec) { [weak self] in
             Task { @MainActor in self?.panel.toggle() }
         }
-        // Derived combos (picker = +⇧, undo = modifiers+Z) are only safe when
-        // the base includes ⌃ or ⌥ — a plain-⌘ base would shadow ⌘Z itself.
+        // Adding Shift to any base is safe — ⇧⌘D collides with nothing.
+        // Deriving undo is not: with a plain-⌘ base, modifiers+Z is ⌘Z, which
+        // would shadow the host app's own undo everywhere.
         let safeBase = spec.modifiers & UInt32(controlKey | optionKey) != 0
-        // Shift + hotkey = manual style picker (still pastes back in place).
-        if safeBase, spec.modifiers & UInt32(shiftKey) == 0 {
+        if spec.modifiers & UInt32(shiftKey) == 0 {
             let picker = HotKeySpec(keyCode: spec.keyCode,
                                     modifiers: spec.modifiers | UInt32(shiftKey),
                                     display: "⇧" + spec.display)

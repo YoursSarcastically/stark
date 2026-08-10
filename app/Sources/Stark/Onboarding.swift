@@ -15,6 +15,10 @@ final class OnboardingController: NSObject, NSWindowDelegate {
                          styleMask: [.titled, .closable, .fullSizeContentView],
                          backing: .buffered, defer: false)
         w.title = "Welcome to Stark"
+        // Onboarding is always light. The demo artwork is a fixed light palette,
+        // and a window that flips with the system theme would leave the
+        // animations sitting on the wrong background half the time.
+        w.appearance = NSAppearance(named: .aqua)
         w.titleVisibility = .hidden
         w.titlebarAppearsTransparent = true
         w.isReleasedWhenClosed = false
@@ -38,8 +42,18 @@ final class OnboardingController: NSObject, NSWindowDelegate {
 
     func show() {
         window?.center()
+        // Stark is an LSUIElement app, so activating it does not reliably pull a
+        // window in front of whatever is already frontmost — first-run setup
+        // could open behind the user's browser and simply never be seen. Raise
+        // it above normal windows to present, then drop back to normal so it
+        // doesn't hover over everything for the rest of its life.
+        window?.level = .floating
+        window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.window?.level = .normal
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -64,6 +78,7 @@ final class OnboardingModel: ObservableObject {
     @Published var notesOn = true
     @Published var codeOn = true
     @Published var auraOn = false
+    @Published var completionOn = false
     @Published var playground = OnboardingView.slop
     @Published var charged = false
     private var keyMonitor: Any?
@@ -141,289 +156,339 @@ struct OnboardingView: View {
     static let slop = "i cant beleive how fast this modle runs on my mac"
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    private static let lastStep = 4
+    /// Four steps, one job each. The previous flow had five and asked about
+    /// per-app personas before the user had seen a single rewrite — a settings
+    /// screen for a product they had no feel for yet. Personas moved to the
+    /// menu bar, where they belong once someone actually wants them.
+    private enum Step: Int, CaseIterable {
+        case welcome, access, tryIt, done
+    }
+    private var step: Step { Step(rawValue: m.step) ?? .welcome }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            content
-                .frame(maxWidth: 460)
-                .padding(.horizontal, 40)
-            Spacer(minLength: 0)
-            footer
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            VStack(spacing: 0) {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 46)
+                footer
+            }
         }
-        .frame(minWidth: 720, minHeight: 560)
-        .background(backdrop)
+        .frame(minWidth: 820, minHeight: 560)
+        .background(.background)
         .onReceive(timer) { _ in m.trusted = InPlace.trusted }
         .onAppear { m.comboDisplay = hotkeyDisplay }
     }
 
-    /// A quiet, system-adaptive backdrop: the window material with a single
-    /// soft accent bloom behind the hero. Setup Assistant, not a hero image —
-    /// the content should be the loudest thing on screen.
-    private var backdrop: some View {
-        ZStack {
-            Rectangle().fill(.background)
-            RadialGradient(colors: [Color.accentColor.opacity(0.18), .clear],
-                           center: .init(x: 0.5, y: 0.28),
-                           startRadius: 0, endRadius: 420)
+    // MARK: chrome
+
+    /// A visible spine of named steps rather than anonymous dots. On a
+    /// four-screen flow the user should always know what is left, and "Grant
+    /// access" reads as a task while a dot reads as a countdown.
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        LinearGradient(colors: [Color.accentColor,
+                                                Color.accentColor.opacity(0.75)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                Text("Stark").font(.system(size: 15, weight: .semibold))
+            }
+            .padding(.bottom, 30)
+
+            ForEach(Step.allCases, id: \.rawValue) { s in
+                stepRow(s)
+            }
+            Spacer()
+            credit
         }
-        .ignoresSafeArea()
+        .padding(24)
+        .frame(width: 216, alignment: .leading)
+        .background(.quaternary.opacity(0.22))
     }
 
-    // MARK: Scaffold
+    private func stepRow(_ s: Step) -> some View {
+        let done = s.rawValue < m.step
+        let current = s == step
+        return HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(done ? Color.accentColor
+                          : (current ? Color.accentColor.opacity(0.16) : Color.clear))
+                    .frame(width: 20, height: 20)
+                if !done, !current {
+                    Circle().stroke(.tertiary, lineWidth: 1).frame(width: 20, height: 20)
+                }
+                if done {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                } else if current {
+                    Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                }
+            }
+            Text(title(s))
+                .font(.system(size: 12.5, weight: current ? .semibold : .regular))
+                .foregroundStyle(current ? AnyShapeStyle(.primary)
+                                 : (done ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)))
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 7)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: m.step)
+    }
 
-    /// Every step is the same shape — hero glyph, title, one line of
-    /// explanation, then its own controls — so moving between them feels like
-    /// one flow rather than five screens.
-    private func page<C: View>(icon: String,
-                               title: String,
-                               subtitle: String,
-                               @ViewBuilder controls: () -> C) -> some View {
-        VStack(spacing: 0) {
-            hero(icon)
-                .padding(.bottom, 24)
-            Text(title)
-                .font(.system(size: 28, weight: .bold))
-                .multilineTextAlignment(.center)
-            Text(subtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 8)
-            controls()
-                .padding(.top, 26)
+    private func title(_ s: Step) -> String {
+        switch s {
+        case .welcome: return "Welcome"
+        case .access:  return "Grant access"
+        case .tryIt:   return "Try it"
+        case .done:    return "You're set"
         }
     }
 
-    private func hero(_ symbol: String) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 34, weight: .medium))
-            .foregroundStyle(.white)
-            .frame(width: 76, height: 76)
-            .background(
-                LinearGradient(colors: [Color.accentColor,
-                                        Color.accentColor.opacity(0.72)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .shadow(color: Color.accentColor.opacity(0.32), radius: 14, y: 6)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch m.step {
-        case 0: hello
-        case 1: power
-        case 2: key
-        case 3: personas
-        default: playgroundStep
+    private var credit: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Built by").font(.system(size: 10)).foregroundStyle(.tertiary)
+            Link("Suraj Sharma",
+                 destination: URL(string: "https://www.linkedin.com/in/surajsharma97/")!)
+                .font(.system(size: 11, weight: .medium))
         }
     }
 
-    /// Progress dots plus the primary action, pinned to the bottom edge the way
-    /// system setup panes do.
     private var footer: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 0) {
             Divider()
             HStack {
-                if m.step > 0 && !m.charged {
-                    Button("Back") { m.step -= 1 }
-                        .buttonStyle(.link)
-                }
-                Spacer()
-                HStack(spacing: 6) {
-                    ForEach(0...Self.lastStep, id: \.self) { i in
-                        Circle()
-                            .fill(i == m.step ? Color.accentColor
-                                              : Color.secondary.opacity(0.28))
-                            .frame(width: 6, height: 6)
-                    }
+                if m.step > 0 {
+                    Button("Back") { m.step -= 1 }.buttonStyle(.link)
                 }
                 Spacer()
                 primaryAction
             }
             .padding(.horizontal, 28)
-            .padding(.bottom, 22)
+            .padding(.vertical, 18)
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: m.step)
     }
 
     @ViewBuilder
     private var primaryAction: some View {
-        switch m.step {
-        case 0: primary("Continue") { m.step = 1 }
-        case 1: primary(m.trusted ? "Continue" : "Skip for Now") { m.step = 2 }
-        case 2: primary("Continue") { m.stopRecording(); m.step = 3 }
-        case 3: primary("Continue") { onPersonas(m.builtPersonas, m.auraOn); m.step = 4 }
-        default:
-            if m.charged { primary("Done") { onFinish() } }
-            else { Button("Skip") { onFinish() }.buttonStyle(.link) }
+        switch step {
+        case .welcome:
+            primary("Get started") { m.step += 1 }
+        case .access:
+            primary(m.trusted ? "Continue" : "Skip for now") { m.step += 1 }
+        case .tryIt:
+            primary("Continue") { m.step += 1 }
+        case .done:
+            primary("Start writing") { onPersonas(m.builtPersonas, m.auraOn); onFinish() }
         }
     }
 
-    // MARK: Steps
+    // MARK: steps
 
-    private var hello: some View {
-        page(icon: "bolt.fill",
-             title: "Welcome to Stark",
-             subtitle: "Your words, only better. A small model, fine-tuned and running entirely on this Mac. No account, no cloud, no subscription.") {
-            VStack(spacing: 14) {
-                bullet("lock.fill", "Nothing you type ever leaves this Mac.")
-                bullet("bolt.horizontal.fill", "Rewrites land in about a second.")
-                bullet("keyboard", "Works in every app, on one keystroke.")
-            }
+    @ViewBuilder
+    private var content: some View {
+        switch step {
+        case .welcome: welcome
+        case .access:  access
+        case .tryIt:   tryIt
+        case .done:    done
         }
     }
 
-    private func bullet(_ symbol: String, _ text: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
+    private func heading(_ title: String, _ sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title)
+                .font(.system(size: 30, weight: .bold))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(sub)
                 .font(.system(size: 14))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 22)
-            Text(text)
-                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var welcome: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Spacer(minLength: 0)
+            heading("Your words, only better.",
+                    "A small model, fine-tuned and running entirely on this Mac. "
+                    + "Select text anywhere, press one key, watch it improve in place.")
+            DemoView("rewrite") { RewriteDemo() }
+            HStack(spacing: 22) {
+                fact("lock.fill", "Nothing leaves\nthis Mac")
+                fact("bolt.fill", "About a second\nper rewrite")
+                fact("keyboard", "Works in\nevery app")
+            }
             Spacer(minLength: 0)
         }
     }
 
-    private var power: some View {
-        page(icon: "hand.raised.fill",
-             title: "Grant Accessibility",
-             subtitle: "Stark rewrites text where it lives, which means copying your selection and pasting the result back. macOS requires your permission for that. Nothing is watched or recorded.") {
-            VStack(spacing: 16) {
-                HStack(spacing: 10) {
-                    Image(systemName: m.trusted ? "checkmark.circle.fill"
-                                                : "exclamationmark.circle.fill")
-                        .foregroundStyle(m.trusted ? Color.green : Color.orange)
-                    Text(m.trusted ? "Permission granted."
-                                   : "Not granted yet — Stark can't paste without it.")
-                        .font(.system(size: 13))
-                    Spacer(minLength: 0)
-                }
-                .padding(12)
-                .background(.quaternary.opacity(0.5),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    private func fact(_ symbol: String, _ text: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 18)
+            Text(text)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 
+    private var access: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Spacer(minLength: 0)
+            heading("One permission, then you're done.",
+                    "To replace text where you wrote it, Stark copies your selection and "
+                    + "pastes the result back. macOS requires your permission for that. "
+                    + "Nothing is recorded, and nothing is sent anywhere.")
+            HStack(spacing: 12) {
+                Image(systemName: m.trusted ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .font(.system(size: 19))
+                    .foregroundStyle(m.trusted ? Color.green : Color.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(m.trusted ? "Accessibility granted" : "Accessibility not granted yet")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(m.trusted ? "Everything below will work."
+                         : "Rewriting can't paste without it.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
                 if !m.trusted {
-                    Button("Open Accessibility Settings…") {
+                    Button("Open Settings…") {
                         InPlace.promptOnce()
-                        let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                        NSWorkspace.shared.open(URL(string: url)!)
+                        NSWorkspace.shared.open(URL(string:
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                     .controlSize(.large)
                 }
             }
-        }
-    }
-
-    private var key: some View {
-        page(icon: "command",
-             title: "Pick Your Shortcut",
-             subtitle: "This combo triggers Stark anywhere. Two keys is plenty — ⌥B or ⌃Space work fine.") {
-            VStack(spacing: 16) {
-                HStack(spacing: 7) {
-                    ForEach(Array(m.comboDisplay.enumerated()), id: \.offset) { _, ch in
-                        Text(String(ch))
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
-                            .frame(minWidth: 38, minHeight: 38)
-                            .background(.quaternary.opacity(0.55),
-                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(.separator, lineWidth: 1))
-                    }
-                    if m.recording {
-                        Text("press keys…")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.leading, 6)
-                    }
-                }
-                Button(m.recording ? "Cancel" : "Record New…") {
-                    m.recording ? m.stopRecording() : m.startRecording(onHotkey: onHotkey)
-                }
-                if let keyWarning = m.keyWarning {
-                    Text(keyWarning)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private var personas: some View {
-        page(icon: "person.2.fill",
-             title: "Where Do You Write?",
-             subtitle: "Stark can match its tone to the app you're in. Change any of this later in Settings.") {
-            VStack(spacing: 0) {
-                personaRow("Chat", "Slack, Discord, Messages → Friendly", $m.chatOn)
-                Divider().padding(.leading, 14)
-                personaRow("Email", "Mail, Outlook → Formal", $m.emailOn)
-                Divider().padding(.leading, 14)
-                personaRow("Notes", "Notes, Obsidian → Bullets", $m.notesOn)
-                Divider().padding(.leading, 14)
-                personaRow("Code", "Xcode, VS Code → Typos only", $m.codeOn)
-                Divider().padding(.leading, 14)
-                personaRow("Aura", "Learn from rewrites you accept", $m.auraOn)
-            }
+            .padding(16)
             .background(.quaternary.opacity(0.4),
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(.separator, lineWidth: 1))
+            Text("Stark waits here until you switch it on — the tick turns green by itself.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
         }
     }
 
-    private func personaRow(_ title: String, _ detail: String,
-                            _ binding: Binding<Bool>) -> some View {
-        HStack(spacing: 12) {
+    private var tryIt: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Spacer(minLength: 0)
+            heading(m.charged ? "That ran on your Mac." : "Try it right here.",
+                    m.charged
+                    ? "No account, no network, no waiting on a server. That is the whole product."
+                    : "Select the sentence below — ⌘A works — then press \(m.comboDisplay).")
+            VStack(alignment: .leading, spacing: 10) {
+                TextEditor(text: $m.playground)
+                    .font(.system(size: 14))
+                    .scrollContentBackground(.hidden)
+                    .frame(height: 78)
+                    .padding(12)
+                    .background(.quaternary.opacity(0.35),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(m.charged ? Color.green : Color.accentColor.opacity(0.5),
+                                lineWidth: 1.5))
+                    .onChange(of: m.playground) { _, new in
+                        if !m.charged, new != Self.slop, !new.lowercased().contains("beleive"),
+                           new.trimmingCharacters(in: .whitespacesAndNewlines).count > 10 {
+                            m.charged = true
+                        }
+                    }
+                HStack(spacing: 7) {
+                    Image(systemName: m.charged ? "checkmark.circle.fill" : "keyboard")
+                        .font(.system(size: 11))
+                        .foregroundStyle(m.charged ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
+                    Text(m.charged ? "Rewritten in place."
+                         : "Not working? Accessibility may still be off — go back a step.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(m.charged ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var done: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Spacer(minLength: 0)
+            heading("You're set.",
+                    "Stark lives in the menu bar. Select text anywhere and press "
+                    + "\(m.comboDisplay) — that's the whole thing.")
+
+            HStack(spacing: 7) {
+                ForEach(Array(m.comboDisplay.enumerated()), id: \.offset) { _, ch in
+                    Text(String(ch))
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .frame(minWidth: 36, minHeight: 36)
+                        .background(.quaternary.opacity(0.5),
+                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(.separator, lineWidth: 1))
+                }
+                Button(m.recording ? "Cancel" : "Change…") {
+                    m.recording ? m.stopRecording() : m.startRecording(onHotkey: onHotkey)
+                }
+                .padding(.leading, 6)
+                if m.recording {
+                    Text("press keys…").font(.system(size: 11)).foregroundStyle(Color.accentColor)
+                }
+            }
+            if let warning = m.keyWarning {
+                Text(warning).font(.system(size: 11)).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider().padding(.vertical, 2)
+
+            // The two things worth knowing exist, each with its own demo. Both
+            // default off — they are the parts that watch what you type.
+            optionRow(demo: "predict", fallback: AnyView(PredictDemo()),
+                      title: "Predictive typing",
+                      detail: "Ghost-text suggestions as you write. Tab accepts.",
+                      isOn: $m.completionOn)
+            optionRow(demo: "aura", fallback: AnyView(AuraDemo()),
+                      title: "Aura",
+                      detail: "Learns your voice from rewrites you keep. Stays on this Mac.",
+                      isOn: $m.auraOn)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func optionRow(demo: String, fallback: AnyView, title: String,
+                           detail: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 14) {
+            DemoView(demo) { fallback }
+                .scaleEffect(0.38, anchor: .center)
+                .frame(width: 150, height: 44)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 8)
-            Toggle("", isOn: binding)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private var playgroundStep: some View {
-        page(icon: m.charged ? "checkmark.seal.fill" : "text.cursor",
-             title: m.charged ? "You're All Set" : "Try It Once",
-             subtitle: m.charged
-                ? "That rewrite ran on your Mac, on your model. Stark lives in the menu bar — select text anywhere and press \(m.comboDisplay)."
-                : "Select the sentence below (⌘A works) and press \(m.comboDisplay).") {
-            TextEditor(text: $m.playground)
-                .font(.system(size: 13))
-                .scrollContentBackground(.hidden)
-                .frame(height: 76)
-                .padding(10)
-                .background(.quaternary.opacity(0.4),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(m.charged ? Color.green : Color.accentColor.opacity(0.55),
-                            lineWidth: 1.5))
-                .onChange(of: m.playground) { _, new in
-                    if !m.charged, new != Self.slop, !new.lowercased().contains("beleive"),
-                       new.trimmingCharacters(in: .whitespacesAndNewlines).count > 10 {
-                        m.charged = true
-                    }
-                }
+            Spacer(minLength: 0)
+            Toggle("", isOn: isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
     }
-
-    // MARK: helpers
 
     private func primary(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Text(title).frame(minWidth: 62) }
+        Button(action: action) { Text(title).frame(minWidth: 76) }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
