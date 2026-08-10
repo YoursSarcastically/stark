@@ -134,6 +134,17 @@ have_model() {
 if have_model; then
     say "Model already downloaded."
 else
+    # Only resume a partial that came from this same URL. Resuming a
+    # GitHub download onto bytes fetched from Hugging Face produced a file of
+    # exactly the right length whose digest was wrong — caught by the check
+    # below, but only after the full 1.2 GB had been pulled.
+    SOURCE_MARK="$MODEL_DIR/.$MODEL_NAME.source"
+    if [ -f "$MODEL_PATH" ] && [ "$(cat "$SOURCE_MARK" 2>/dev/null)" != "$MODEL_URL" ]; then
+        echo "  A partial download from a different source was found; starting fresh."
+        rm -f "$MODEL_PATH"
+    fi
+    printf '%s' "$MODEL_URL" > "$SOURCE_MARK"
+
     say "Downloading the model (1.2 GB, one time)…"
     echo "  This is the whole product — it runs on your Mac, so it has to live here."
     # -C - resumes a partial file, so a dropped connection costs only what was
@@ -143,6 +154,15 @@ else
         echo "  Stark will also offer to finish it from the setup window."
         MODEL_INCOMPLETE=1
     fi
+fi
+
+if [ -f "$MODEL_PATH" ] && ! have_model && [ -z "${MODEL_INCOMPLETE:-}" ]; then
+    GOT_SZ=$(stat -f%z "$MODEL_PATH" 2>/dev/null || echo 0)
+    echo "  Got $GOT_SZ bytes, expected $MODEL_BYTES. Discarding and starting over."
+    rm -f "$MODEL_PATH" "$MODEL_DIR/.$MODEL_NAME.source"
+    say "Downloading the model again…"
+    curl -fL --progress-bar "$MODEL_URL" -o "$MODEL_PATH" || MODEL_INCOMPLETE=1
+    printf '%s' "$MODEL_URL" > "$MODEL_DIR/.$MODEL_NAME.source"
 fi
 
 if have_model; then
@@ -155,12 +175,20 @@ if have_model; then
         printf '%s' "$MODEL_SHA" > "$MODEL_DIR/.$MODEL_NAME.verified"
         echo "  Verified."
     else
-        rm -f "$MODEL_PATH" "$MODEL_DIR/.$MODEL_NAME.verified"
+        rm -f "$MODEL_PATH" "$MODEL_DIR/.$MODEL_NAME.verified" "$MODEL_DIR/.$MODEL_NAME.source"
         fail "The model arrived damaged and has been deleted. Run the installer again."
     fi
 fi
 
 # --- 5. Go ------------------------------------------------------------------
+# Always show setup after installing. It is where the Accessibility permission
+# gets explained, and without it people are left with a menu bar icon and no
+# idea what to do with it. The model step will already be ticked off.
+CONFIG="$HOME/.stark/config.json"
+if [ -f "$CONFIG" ]; then
+    plutil -replace onboarded -bool false "$CONFIG" 2>/dev/null || true
+fi
+
 say "Starting Stark…"
 open "$DEST"
 
