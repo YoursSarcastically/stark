@@ -163,7 +163,7 @@ struct OnboardingView: View {
     let onFinish: () -> Void
 
     @StateObject private var m = OnboardingModel()
-    @StateObject private var models = ModelStore()
+    @StateObject private var models = ModelStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let slop = "i cant beleive how fast this modle runs on my mac"
@@ -364,8 +364,13 @@ struct OnboardingView: View {
                     .buttonStyle(GlassButton())
                     .disabled(true)
                     .opacity(0.6)
+            } else if case .verifying = models.state {
+                Button("Checking…") {}
+                    .buttonStyle(GlassButton())
+                    .disabled(true)
+                    .opacity(0.6)
             } else {
-                primary("Download · 1.2 GB") { models.start() }
+                primary("Download · \(ModelStore.describe(ModelStore.expectedBytes))") { models.start() }
             }
         case .access:
             primary(m.trusted ? "Continue" : "Skip for now") { m.step += 1 }
@@ -475,6 +480,10 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 9) {
                     ProgressView(value: fraction)
                         .progressViewStyle(.linear)
+                        // Without this the bar draws in the *system* accent,
+                        // so it came out orange on a Mac set to orange — the
+                        // one control on the screen that ignored the palette.
+                        .tint(Color.brand)
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.3),
                                    value: fraction)
                     HStack {
@@ -488,9 +497,15 @@ struct OnboardingView: View {
                 }
                 .padding(16)
                 .glassCard()
+            case .verifying:
+                statusCard(symbol: "checkmark.shield", tint: .secondary,
+                           title: "Checking the download",
+                           detail: "Making sure every byte arrived intact")
             case .failed(let why):
-                statusCard(symbol: "exclamationmark.triangle.fill", tint: .orange,
-                           title: "That one didn't land", detail: why)
+                statusCard(symbol: "exclamationmark.triangle.fill",
+                           tint: Color.brandWarning,
+                           title: "That one didn't land",
+                           detail: "\(why) Press Download to pick up where it stopped.")
             case .missing:
                 statusCard(symbol: "arrow.down.circle", tint: .secondary,
                            title: "Still in the box",

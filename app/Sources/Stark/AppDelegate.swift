@@ -41,6 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.start()
         registerHotKeys()
 
+        // A fresh install has no weights, so the first start above is a no-op.
+        // ModelStore posts this once the download is on disk and verified.
+        NotificationCenter.default.addObserver(
+            forName: .starkModelReady, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.server.start() }
+            }
+
         if !config.onboarded { showOnboarding() }
     }
 

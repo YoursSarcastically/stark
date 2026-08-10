@@ -88,11 +88,27 @@ struct Config: Codable {
     /// Resolution order: an explicit path in config.json, then the model bundled
     /// in the app. A downloaded Stark has no config file at all, so the bundled
     /// weights have to be the default rather than something the user configures.
+    /// Explicit path, then weights inside the bundle, then weights the user
+    /// downloaded on first run. Most people are on the third: the app ships
+    /// without the model so the download is ~30 MB instead of 1.28 GB.
     var modelPath: String {
         if !model.isEmpty {
             return model.hasPrefix("~") ? (model as NSString).expandingTildeInPath : model
         }
-        return Config.bundledModel ?? ""
+        if let bundled = Config.bundledModel { return bundled }
+        return Config.downloadedModel ?? ""
+    }
+
+    /// Mirrors `ModelStore.installedPath()` without needing the main actor,
+    /// so `ServerManager` can ask from wherever it happens to be.
+    static var downloadedModel: String? {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask)[0]
+        let url = base.appendingPathComponent("Stark/stark-1.7b-Q5_K_M.gguf")
+        guard let size = try? FileManager.default
+            .attributesOfItem(atPath: url.path)[.size] as? Int64,
+              size > 1_000_000_000 else { return nil }
+        return url.path
     }
 
     static var bundledModel: String? {

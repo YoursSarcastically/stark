@@ -10,10 +10,11 @@ import Foundation
 /// no runtime on the user's machine, and is Metal-accelerated.
 final class ServerManager: ObservableObject {
     enum Status: Equatable {
-        case stopped, starting, running, sleeping, failed(String)
+        case stopped, waitingForModel, starting, running, sleeping, failed(String)
 
         var label: String {
             switch self {
+            case .waitingForModel: return "waiting for the model"
             case .stopped: return "stopped"
             case .sleeping: return "sleeping (wakes on use)"
             case .starting: return "starting…"
@@ -68,8 +69,12 @@ final class ServerManager: ObservableObject {
             setStatus(.failed("inference engine missing from the app bundle"))
             return
         }
-        guard FileManager.default.fileExists(atPath: config.modelPath) else {
-            setStatus(.failed("model not downloaded yet"))
+        // Not an error: with the model fetched on first run rather than
+        // bundled, "no weights yet" is the normal state of a fresh install.
+        // The server waits, and AppDelegate starts it when the download lands.
+        guard !config.modelPath.isEmpty,
+              FileManager.default.fileExists(atPath: config.modelPath) else {
+            setStatus(.waitingForModel)
             return
         }
 

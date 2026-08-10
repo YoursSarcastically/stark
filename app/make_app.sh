@@ -25,23 +25,49 @@ ENGINE="../vendor/llama-b10333"
 if [ -x "$ENGINE/llama-server" ]; then
   mkdir -p "$APP/Contents/Resources/llama"
   cp "$ENGINE/llama-server" "$APP/Contents/Resources/llama/"
-  cp "$ENGINE"/*.dylib "$APP/Contents/Resources/llama/" 2>/dev/null || true
+  # Copy one real file per library and symlink its aliases. llama.cpp ships
+  # each dylib three times over (libfoo.dylib, libfoo.0.dylib,
+  # libfoo.0.19.0.dylib), which is 53 MB of the same 24 MB of code.
+  for lib in "$ENGINE"/*.dylib; do
+    base="$(basename "$lib")"
+    [ -L "$lib" ] && continue
+    cp "$lib" "$APP/Contents/Resources/llama/$base"
+  done
+  ( cd "$APP/Contents/Resources/llama"
+    for full in *.[0-9]*.[0-9]*.[0-9]*.dylib; do
+      [ -e "$full" ] || continue
+      stem="${full%%.*}"
+      major="$(echo "$full" | sed -E 's/^[^.]+\.([0-9]+)\..*/\1/')"
+      for alias in "$stem.dylib" "$stem.$major.dylib"; do
+        [ "$alias" = "$full" ] && continue
+        rm -f "$alias"; ln -s "$full" "$alias"
+      done
+    done )
   echo "  bundled llama-server ($(du -sh "$APP/Contents/Resources/llama" | cut -f1))"
 else
   echo "  ⚠️  vendor/llama-b10333/llama-server missing — the app will not run."
   echo "     Fetch it: see vendor/README.md"
 fi
 
-# The weights. Bundling them makes the .app self-contained: no first-run
-# download, no network, nothing for the user to configure. Set STARK_MODEL to
-# build a smaller app that expects a model path in ~/.stark/config.json.
-MODEL="${STARK_MODEL:-../model/stark-1.7b-Q5_K_M.gguf}"
-if [ -f "$MODEL" ]; then
-  mkdir -p "$APP/Contents/Resources/model"
-  cp "$MODEL" "$APP/Contents/Resources/model/"
-  echo "  bundled $(basename "$MODEL") ($(du -h "$MODEL" | cut -f1))"
+# The weights, off by default.
+#
+# Bundling them made a 1.28 GB download, of which 1.2 GB was one file that does
+# not change between releases — so every user re-downloaded the model to get a
+# 2 MB app fix. The app now fetches it once on first run, with a progress bar,
+# and keeps it in Application Support where an app update cannot disturb it.
+#
+# Set STARK_BUNDLE_MODEL=1 for an offline build that needs no network at all.
+if [ "${STARK_BUNDLE_MODEL:-0}" = "1" ]; then
+  MODEL="${STARK_MODEL:-../model/stark-1.7b-Q5_K_M.gguf}"
+  if [ -f "$MODEL" ]; then
+    mkdir -p "$APP/Contents/Resources/model"
+    cp "$MODEL" "$APP/Contents/Resources/model/"
+    echo "  bundled $(basename "$MODEL") ($(du -h "$MODEL" | cut -f1))"
+  else
+    echo "  STARK_BUNDLE_MODEL=1 but $MODEL is missing"
+  fi
 else
-  echo "  no model bundled — the app will look for one in ~/.stark/config.json"
+  echo "  no model bundled — fetched on first run"
 fi
 
 # Onboarding demo animations. Regenerate with tools/make_demos.py; the app

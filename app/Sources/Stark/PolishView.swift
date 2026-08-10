@@ -59,6 +59,7 @@ struct PolishView: View {
         case .running: return .green
         case .starting: return .orange
         case .sleeping: return .secondary
+        case .waitingForModel: return .orange
         case .stopped, .failed: return .red
         }
     }
