@@ -92,13 +92,20 @@ personas in the appendix.
 ## Suit up
 
 ```bash
-git clone https://github.com/YoursSarcastically/stark.git ~/Stark
-cd ~/Stark && ./install.sh
+curl -fsSL https://raw.githubusercontent.com/YoursSarcastically/stark/main/install.sh | bash
 ```
 
-That builds the app, sets up a private Python environment in `~/.stark`,
-downloads the model, and launches. Needs macOS 14+, Apple silicon, about 4 GB
-of disk, and Xcode Command Line Tools (`xcode-select --install`).
+That downloads Stark, puts it in `/Applications`, fetches the model, and opens
+it. Nothing else lands on your machine — no Python, no Homebrew, no build
+tools. Needs macOS 14+, Apple silicon, and about 4 GB of disk.
+
+Install this way rather than opening the DMG by hand. Stark is signed but not
+notarized — that needs a paid Apple Developer account — so a DMG you download
+in a browser is blocked by Gatekeeper, and macOS 15 removed the Control-click
+→ Open escape hatch. The installer clears the quarantine flag for you, so
+there is no warning to click through.
+
+Building from source instead: `git clone` the repo and run `app/make_app.sh`.
 
 Two things afterwards: grant **Accessibility** when macOS asks — that is how
 the invisible copy and paste happen, and rewriting does nothing without it —

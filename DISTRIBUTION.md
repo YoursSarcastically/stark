@@ -57,14 +57,41 @@ Then re-run both eval harnesses against `llama-server` before shipping.
 
 ## Gatekeeper
 
+**Send people the install line, not the DMG.**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/YoursSarcastically/stark/main/install.sh | bash
+```
+
+`install.sh` clears the quarantine flag as part of installing, so nobody sees
+a warning at all. A DMG handed over directly — AirDrop, email, a download link
+— arrives quarantined, and the app is signed with a self-signed certificate
+that exists only on the machine that built it. On anyone else's Mac that
+authority is unknown and `spctl` rejects it outright.
+
 Three tiers, chosen automatically by `make_release.sh` from what is in your
 keychain:
 
 | What you have | What the user sees |
 |---|---|
-| Developer ID + notarization (`NOTARY_PROFILE=…`) | Opens cleanly. The only acceptable option for a public download. |
-| Developer ID, no notarization | Blocked on first open; right-click → Open. |
-| Ad-hoc / self-signed | macOS refuses it; user must run `xattr -dr com.apple.quarantine`. |
+| Developer ID + notarization (`NOTARY_PROFILE=…`) | Opens cleanly. The only option that works for a plain download link. |
+| Developer ID, no notarization | Blocked on first open; System Settings → Privacy & Security → Open Anyway. |
+| Ad-hoc / self-signed (today) | Refused. Either install via `install.sh`, or see below. |
+
+### If someone already has the DMG
+
+Control-click → Open no longer works: macOS 15 removed that bypass. The two
+paths that do:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Stark.app
+```
+
+or, without a terminal: try to open Stark, then **System Settings → Privacy &
+Security**, scroll to the message about Stark, and click **Open Anyway**.
+
+Neither is something you can reasonably ask a stranger to do, which is why
+notarization is the only real answer for public distribution.
 
 Notarization needs a paid Apple Developer account and a one-time keychain
 profile:
@@ -84,9 +111,6 @@ Developer ID and cannot be notarized.
 
 1. **Notarization.** The only thing between the current DMG and a link anyone
    can click. Needs the $99/yr account.
-2. **A smaller download.** 1.2 GB is a lot for a first impression. Shipping the
-   app empty (~55 MB) and fetching the weights on first run is the usual answer,
-   at the cost of a download UI and a failure mode on bad networks.
 3. **mlx-swift**, eventually. `llama-server` still costs an HTTP hop per
    request. In-process inference would remove it — but it needs Xcode, which is
    the constraint this whole approach was designed to avoid.
