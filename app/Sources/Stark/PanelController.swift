@@ -112,7 +112,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         removeKeyMonitor()
         vm.cancel()
         panel?.orderOut(nil)
-        NSApp.hide(nil) // hand focus back to the previous app
+        // Hand focus back to the app being written in — but NOT when that app
+        // is Stark itself. The onboarding "try it" step rewrites text inside
+        // Stark's own window, and hiding the whole app first meant the paste
+        // had nowhere to land, so the step could never complete.
+        let targetIsSelf = pasteTarget?.processIdentifier
+            == ProcessInfo.processInfo.processIdentifier
+        if !targetIsSelf { NSApp.hide(nil) }
     }
 
     private func makePanel() {

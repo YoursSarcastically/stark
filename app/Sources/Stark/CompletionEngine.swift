@@ -36,7 +36,10 @@ final class CompletionEngine {
     /// has moved on, but a card is still sitting over their screen claiming to
     /// describe what they were typing.
     private var expiryTimer: Timer?
-    private let suggestionLifetime: TimeInterval = 2
+    /// Long enough to read a sentence and decide, not so long that a suggestion
+    /// you have already typed past is still sitting there. Two seconds was not
+    /// enough to finish reading one.
+    private let suggestionLifetime: TimeInterval = 8
     private let streamingBackstop: TimeInterval = 12
     /// Deliberate pointer input — a click, a scroll, a pinch — means attention
     /// has left the keyboard, so the suggestion is stale.
