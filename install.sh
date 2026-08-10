@@ -1,5 +1,8 @@
 #!/bin/bash
-# Stark — one-command setup.
+# Stark — build from source.
+#
+# Most people should download the DMG instead; this is for building it
+# yourself. The released app is self-contained — no Python, no model download.
 #
 #   git clone https://github.com/YoursSarcastically/stark.git ~/Stark
 #   cd ~/Stark && ./install.sh

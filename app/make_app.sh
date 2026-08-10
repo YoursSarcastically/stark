@@ -10,6 +10,32 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Stark "$APP/Contents/MacOS/Stark"
 
+# The inference engine. Binary and dylibs must land in one directory: the
+# binary's LC_RPATH is @loader_path, so they resolve each other by proximity.
+# Without this the app is useless on any machine but the one that built it.
+ENGINE="../vendor/llama-b10333"
+if [ -x "$ENGINE/llama-server" ]; then
+  mkdir -p "$APP/Contents/Resources/llama"
+  cp "$ENGINE/llama-server" "$APP/Contents/Resources/llama/"
+  cp "$ENGINE"/*.dylib "$APP/Contents/Resources/llama/" 2>/dev/null || true
+  echo "  bundled llama-server ($(du -sh "$APP/Contents/Resources/llama" | cut -f1))"
+else
+  echo "  ⚠️  vendor/llama-b10333/llama-server missing — the app will not run."
+  echo "     Fetch it: see vendor/README.md"
+fi
+
+# The weights. Bundling them makes the .app self-contained: no first-run
+# download, no network, nothing for the user to configure. Set STARK_MODEL to
+# build a smaller app that expects a model path in ~/.stark/config.json.
+MODEL="${STARK_MODEL:-../model/stark-1.7b-Q5_K_M.gguf}"
+if [ -f "$MODEL" ]; then
+  mkdir -p "$APP/Contents/Resources/model"
+  cp "$MODEL" "$APP/Contents/Resources/model/"
+  echo "  bundled $(basename "$MODEL") ($(du -h "$MODEL" | cut -f1))"
+else
+  echo "  no model bundled — the app will look for one in ~/.stark/config.json"
+fi
+
 # Onboarding backgrounds (optional; gradients are the fallback)
 if compgen -G "Backgrounds/*.jpg" > /dev/null; then
   mkdir -p "$APP/Contents/Resources/backgrounds"

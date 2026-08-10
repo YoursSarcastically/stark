@@ -37,6 +37,10 @@ struct StarkClient {
                 ["role": "system", "content": "complete"],
                 ["role": "user", "content": prefix],
             ],
+            // Qwen3 reasons by default; left on, every reply arrives wrapped in
+            // a <think> block. llama.cpp takes this per request rather than as
+            // a server flag.
+            "chat_template_kwargs": ["enable_thinking": false],
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -169,6 +173,7 @@ struct StarkClient {
                 ["role": "system", "content": tag],
                 ["role": "user", "content": text],
             ],
+            "chat_template_kwargs": ["enable_thinking": false],
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 

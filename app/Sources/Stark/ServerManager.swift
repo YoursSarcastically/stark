@@ -1,7 +1,13 @@
 import Foundation
 
-/// Owns the local `mlx_lm server` subprocess: starts it with the fine-tuned
-/// adapter, polls /v1/models until healthy, and kills it on quit.
+/// Owns the local inference server subprocess: starts it, polls /v1/models
+/// until healthy, and kills it on quit.
+///
+/// The server is `llama-server`, shipped inside the app bundle. It used to be
+/// `python -m mlx_lm server`, which meant every user needed a Python with
+/// mlx-lm installed — fine on the machine Stark was built on, an immediate
+/// failure for anyone who downloaded it. The bundled binary is ~23 MB, needs
+/// no runtime on the user's machine, and is Metal-accelerated.
 final class ServerManager: ObservableObject {
     enum Status: Equatable {
         case stopped, starting, running, sleeping, failed(String)
@@ -25,7 +31,7 @@ final class ServerManager: ObservableObject {
 
     init(config: Config) { self.config = config }
 
-    /// Kill any `mlx_lm server` left behind by a previous Stark.
+    /// Kill any inference server left behind by a previous Stark.
     ///
     /// The server is spawned as a child process, so if Stark is force-quit or
     /// crashes, launchd reparents it (PPID 1) and it lives on — holding ~1 GB
@@ -37,11 +43,18 @@ final class ServerManager: ObservableObject {
         probe.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
         // Match only our own server on our own port, so a user's unrelated
         // mlx_lm server is never touched.
-        probe.arguments = ["-f", "mlx_lm server .*--port \(config.port)"]
+        probe.arguments = ["-f", "llama-server .*--port \(config.port)"]
         probe.standardOutput = FileHandle.nullDevice
         probe.standardError = FileHandle.nullDevice
         try? probe.run()
         probe.waitUntilExit()
+    }
+
+    /// The bundled `llama-server`, alongside its dylibs. Its LC_RPATH is
+    /// `@loader_path`, so binary and libraries only have to share a directory —
+    /// which is what `Resources/llama/` gives us.
+    static var bundledServer: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("llama/llama-server")
     }
 
     func start() {
@@ -50,26 +63,35 @@ final class ServerManager: ObservableObject {
         reapOrphans()
         setStatus(.starting)
 
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: config.pythonPath)
-        var args = ["-m", "mlx_lm", "server",
-                    "--model", config.modelPath,
-                    "--host", "127.0.0.1",
-                    "--port", String(config.port),
-                    // Qwen3 is a hybrid-thinking model and its chat template
-                    // turns reasoning ON by default. Left alone it wraps every
-                    // rewrite in a <think> block — wrong output, and seconds of
-                    // latency Stark cannot afford. Harmless for Qwen2.5, whose
-                    // template simply ignores the flag.
-                    "--chat-template-args", #"{"enable_thinking":false}"#]
-        if !config.adapterAbsPath.isEmpty,
-           FileManager.default.fileExists(atPath: config.adapterAbsPath) {
-            args += ["--adapter-path", config.adapterAbsPath]
+        guard let server = Self.bundledServer,
+              FileManager.default.isExecutableFile(atPath: server.path) else {
+            setStatus(.failed("inference engine missing from the app bundle"))
+            return
         }
-        p.arguments = args
-        var env = ProcessInfo.processInfo.environment
-        env["HF_HUB_OFFLINE"] = "1"
-        p.environment = env
+        guard FileManager.default.fileExists(atPath: config.modelPath) else {
+            setStatus(.failed("model not downloaded yet"))
+            return
+        }
+
+        let p = Process()
+        p.executableURL = server
+        p.arguments = [
+            "-m", config.modelPath,
+            "--host", "127.0.0.1",
+            "--port", String(config.port),
+            // Small window: Stark rewrites a selection or completes a sentence,
+            // never a whole document in one pass, and the KV cache is the bulk
+            // of resident memory on an 8 GB machine.
+            "-c", "4096",
+            // Everything on the GPU. These are small models; splitting layers
+            // between CPU and GPU only adds transfer overhead.
+            "-ngl", "99",
+            // Use the model's own chat template, so the one-word system tags
+            // reach the model the same way they did in training.
+            "--jinja",
+            "--no-warmup",
+        ]
+        p.environment = ProcessInfo.processInfo.environment
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         p.terminationHandler = { [weak self] proc in

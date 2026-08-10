@@ -81,6 +81,9 @@ def rewrite(port, text, tag):
         "messages": [{"role": "system", "content": tag},
                      {"role": "user", "content": text}],
         "temperature": 0.2, "max_tokens": 200,
+        # llama.cpp needs the thinking flag here; mlx_lm takes it as a server
+        # argument. Sending it to a server that doesn't know it is harmless.
+        "chat_template_kwargs": {"enable_thinking": False},
     }).encode()
     req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions",
                                  data=body, headers={"Content-Type": "application/json"})

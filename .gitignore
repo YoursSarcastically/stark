@@ -16,3 +16,9 @@ model/data-complete/
 model/data-hardening/
 model/data-rewrite/
 model/data-unified/
+
+# Prebuilt inference binaries and GGUF weights (release artifacts, see vendor/README.md)
+vendor/llama-b10333/
+vendor/llama.cpp-src/
+model/*.gguf
+model/stark-1.7b-fp16/

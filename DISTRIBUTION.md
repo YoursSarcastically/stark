@@ -1,57 +1,72 @@
-# Shipping Stark as a download
+# Shipping Stark
 
-`app/make_release.sh` builds a signed, optionally notarized `Stark.dmg`. That solves
-packaging. It does **not** yet solve "someone downloads this and it works," because of
-two blockers in the current architecture.
+`app/make_release.sh` builds `Stark.dmg`. The app inside it is **self-contained**:
+a bundled inference engine and the model weights, no Python, no downloads, no
+configuration. Drag it to Applications and it works offline.
 
-## Blocker 1 — the app needs Python
+That was not true until recently. The app used to spawn `python -m mlx_lm
+server`, so a downloader got "server exited (code 1)" unless they happened to
+have a Python with mlx-lm installed. Two changes fixed it.
 
-`ServerManager` spawns `python -m mlx_lm server`, reading the interpreter path from
-`~/.stark/config.json`. A downloader has no `~/.stark/venv`, no `mlx-lm`, and on a
-stock Mac only Python 3.9 with nothing installed. The app launches, the server fails,
-and the menu bar says "failed — server exited (code 1)".
+## The engine ships with the app
 
-**Fix: drop Python and run the model in-process via `mlx-swift`.**
+`llama.cpp`'s prebuilt `llama-server` (~23 MB, Metal-accelerated) lives in
+`Stark.app/Contents/Resources/llama/`. Its `LC_RPATH` is `@loader_path`, so the
+binary and its dylibs resolve each other simply by sharing a directory.
 
-This is exactly what [TabType](https://github.com/nilava/TabType) does — its
-`Package.swift` pulls `mlx-swift` + `mlx-swift-lm` and calls `MLXLLM` directly, so its
-app bundle is self-contained. Concretely, for Stark:
+**Prebuilt is the point.** Building `llama.cpp` — or `mlx-swift` — from source
+requires the Metal compiler, which ships with Xcode and not with Command Line
+Tools. Using release binaries means Stark builds and ships without anyone
+installing Xcode.
 
-```swift
-// Package.swift
-.package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "3.0.0"),
-.package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.0"),
+Fetch them once with the snippet in `vendor/README.md`.
+
+## The weights ship with the app
+
+`stark-1.7b-Q5_K_M.gguf` (1.2 GB) sits in `Contents/Resources/model/`.
+`Config.modelPath` falls back to it when `~/.stark/config.json` names nothing —
+which is the case for every downloader, since they have no config file at all.
+
+Q5_K_M rather than Q4_K_M: Q4 cost about 140 MB less but measurably degraded
+`expand`, and scored 15/16 rather than matching the MLX build on the rewrite
+regression suite.
+
+Build a smaller app that expects an external model with
+`STARK_MODEL=/dev/null ./make_app.sh`.
+
+## Regenerating the GGUF
+
+The published MLX model is 4-bit and GGUF cannot read MLX quantisation, so the
+conversion starts from full precision:
+
+```bash
+# 1. Fuse the adapter onto the FP16 base (not the 4-bit one)
+python -m mlx_lm fuse --model Qwen/Qwen3-1.7B \
+    --adapter-path model/adapters-unified-1.7b --save-path model/stark-1.7b-fp16
+
+# 2. HF -> GGUF (needs vendor/llama.cpp-src and torch)
+python vendor/llama.cpp-src/convert_hf_to_gguf.py model/stark-1.7b-fp16 \
+    --outfile model/stark-1.7b-f16.gguf --outtype f16
+
+# 3. Quantise
+./vendor/llama-b10333/llama-quantize model/stark-1.7b-f16.gguf \
+    model/stark-1.7b-Q5_K_M.gguf Q5_K_M
 ```
 
-`StarkClient` then loads the model and streams tokens directly instead of speaking
-HTTP to `127.0.0.1:8765`, and `ServerManager` disappears entirely. This also removes
-the ~470 ms per-request HTTP round trip, which matters a lot for predictive typing.
-
-Bundling a Python runtime inside the `.app` is the alternative, but it means shipping
-several hundred MB of interpreter plus native `mlx` wheels and rewriting the spawn
-logic to use the embedded copy. It's strictly worse than going native.
-
-## Blocker 2 — the model is 850 MB
-
-Too big for a DMG people will download twice, and it can't live in git. Do what every
-local-model app does: ship the app empty and fetch the weights on first run, with a
-progress UI and a resumable download, into `~/Library/Application Support/Stark/`.
-`swift-huggingface` handles this if you've already added the MLX packages.
-
-Until then, `config.json` must point at a hand-placed model directory — fine for you,
-not for a stranger.
+Then re-run both eval harnesses against `llama-server` before shipping.
 
 ## Gatekeeper
 
-Three tiers, handled automatically by `make_release.sh`:
+Three tiers, chosen automatically by `make_release.sh` from what is in your
+keychain:
 
-| What you have | User experience |
+| What you have | What the user sees |
 |---|---|
 | Developer ID + notarization (`NOTARY_PROFILE=…`) | Opens cleanly. The only acceptable option for a public download. |
-| Developer ID, no notarization | Blocked on first open; user must right-click → Open. |
-| Ad-hoc / self-signed | macOS refuses it. User must run `xattr -dr com.apple.quarantine`. |
+| Developer ID, no notarization | Blocked on first open; right-click → Open. |
+| Ad-hoc / self-signed | macOS refuses it; user must run `xattr -dr com.apple.quarantine`. |
 
-Notarization needs a paid Apple Developer account ($99/yr) and a one-time keychain
+Notarization needs a paid Apple Developer account and a one-time keychain
 profile:
 
 ```bash
@@ -61,15 +76,17 @@ xcrun notarytool store-credentials "stark-notary" \
 
 Then `NOTARY_PROFILE=stark-notary ./app/make_release.sh`.
 
-Note that `setup_signing.sh` ("Stark Dev") is a *local development* identity only — it
-keeps macOS from dropping your Accessibility grant on every rebuild. It is not a
+`setup_signing.sh` ("Stark Dev") is a *local development* identity only — it
+stops macOS dropping your Accessibility grant on every rebuild. It is not a
 Developer ID and cannot be notarized.
 
-## Order of work
+## What is left
 
-1. Port inference to `mlx-swift`, delete `ServerManager` and the Python dependency.
-2. First-run model download with progress.
-3. Developer ID + notarization.
-4. Host the DMG, plus a Sparkle feed if you want auto-updates.
-
-Steps 1 and 2 are the real work; 3 is paperwork and a credit card.
+1. **Notarization.** The only thing between the current DMG and a link anyone
+   can click. Needs the $99/yr account.
+2. **A smaller download.** 1.2 GB is a lot for a first impression. Shipping the
+   app empty (~55 MB) and fetching the weights on first run is the usual answer,
+   at the cost of a download UI and a failure mode on bad networks.
+3. **mlx-swift**, eventually. `llama-server` still costs an HTTP hop per
+   request. In-process inference would remove it — but it needs Xcode, which is
+   the constraint this whole approach was designed to avoid.
